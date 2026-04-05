@@ -1,7 +1,13 @@
 {
-  "name": "@yejianfei/subagent-cli",
+  "name": "@yejianfei.billy/subagent-cli",
   "version": "0.1.2",
   "description": "Delegate tasks to sub-agent CLI instances (Claude Code, Codex, etc.)",
+  "author": "yejianfei.billy",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yejianfei/subagent-cli.git"
+  },
   "main": "dist/cli.js",
   "bin": {
     "subagent-cli": "./dist/cli.js"

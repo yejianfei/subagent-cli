@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.3] - 2026-04-05
+
+### Changed
+- Scoped npm package name: `@yejianfei.billy/subagent-cli`
+- Added author, license, repository fields to package.json
+- Updated LICENSE copyright year to 2025-2026
+- GitHub Release now shows CHANGELOG content
+- Added `fetch-linux` script for npm publish with cross-platform binaries
+- Added `npm version` hooks for automated release workflow
+
 ## [0.1.2] - 2026-04-05
 
 ### Fixed
