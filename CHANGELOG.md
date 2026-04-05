@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.2] - 2026-04-05
+
+### Fixed
+- Linux release now includes `spawn-helper` binary (compiled from source in CI)
+- Version number auto-injected from `package.json` via webpack DefinePlugin
+
+### Added
+- `npm version` hooks: pre-check lint/build/test, enforce CHANGELOG entry, auto-push tags
+
 ## [0.1.1] - 2026-04-05
 
 ### Fixed
