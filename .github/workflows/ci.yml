@@ -29,6 +29,18 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Copy Linux native module
+        if: runner.os == 'Linux'
+        run: |
+          ARCH=$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/')
+          TARGET="linux-${ARCH}"
+          mkdir -p node_modules/node-pty/prebuilds/${TARGET}
+          cp node_modules/node-pty/build/Release/pty.node node_modules/node-pty/prebuilds/${TARGET}/
+          # spawn-helper may be in build/Release or prebuilds
+          if [ -f node_modules/node-pty/build/Release/spawn-helper ]; then
+            cp node_modules/node-pty/build/Release/spawn-helper node_modules/node-pty/prebuilds/${TARGET}/
+          fi
+
       - name: Build
         run: npm run build
 
