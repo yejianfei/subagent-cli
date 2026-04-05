@@ -4,15 +4,15 @@ Drive independent coding environments like Claude Code and Codex through headles
 
 ## Why subagent-cli
 
-| | Claude Code Built-in Subagents | Claude Squad | tmux | subagent-cli |
-|---|---|---|---|---|
-| How | Internal subprocess spawning | tmux sessions + git worktree | Main agent drives tmux directly | Headless PTY + CLI state machine |
-| For | Official built-in feature | TUI for humans managing multiple agents | AI self-driving tmux | CLI for AI-to-AI delegation |
-| Cross-model | ❌ Anthropic only | ✅ Claude Code / Codex / Aider / Gemini | ✅ Any terminal tool | ✅ Claude Code / Codex |
-| AI-programmable | ✅ Via tool calls | ❌ Human-facing | ⚠️ Must parse screen yourself | ✅ JSON in/out |
-| Main agent token cost | Subagents share context window | N/A (human-driven) | High (each poll consumes tokens) | Low (only on send/receive) |
-| Approval control | Limited by permission modes | Manual interaction | Simulate keystrokes | Full flow (approve / reject / amend / allow-all) |
-| Vendor lock-in | Anthropic | None | None | None |
+| <br />                | Claude Code Built-in Subagents | Claude Squad                            | tmux                             | subagent-cli                                     |
+| --------------------- | ------------------------------ | --------------------------------------- | -------------------------------- | ------------------------------------------------ |
+| How                   | Internal subprocess spawning   | tmux sessions + git worktree            | Main agent drives tmux directly  | Headless PTY + CLI state machine                 |
+| For                   | Official built-in feature      | TUI for humans managing multiple agents | AI self-driving tmux             | CLI for AI-to-AI delegation                      |
+| Cross-model           | ❌ Anthropic only               | ✅ Claude Code / Codex / Aider / Gemini  | ✅ Any terminal tool              | ✅ Claude Code / Codex                            |
+| AI-programmable       | ✅ Via tool calls               | ❌ Human-facing                          | ⚠️ Must parse screen yourself    | ✅ JSON in/out                                    |
+| Main agent token cost | Subagents share context window | N/A (human-driven)                      | High (each poll consumes tokens) | Low (only on send/receive)                       |
+| Approval control      | Limited by permission modes    | Manual interaction                      | Simulate keystrokes              | Full flow (approve / reject / amend / allow-all) |
+| Vendor lock-in        | Anthropic                      | None                                    | None                             | None                                             |
 
 ## What It Does
 
@@ -33,7 +33,7 @@ Drive independent coding environments like Claude Code and Codex through headles
 ## Architecture
 
 ```
-Main Agent (Claude Code / Gemini CLI / ...)
+Main Agent (Claude Code / Codex / ...)
     │
     │  stdout JSON
     ▼
@@ -66,10 +66,10 @@ The CLI auto-detects the App daemon via TCP probe. If not running, it forks one 
 
 ## Supported Terminals
 
-| Adapter | Status | CLI Tool |
-|---------|--------|----------|
-| `claude-code` | ✅ Available | [Claude Code](https://claude.ai/code) |
-| `codex` | ✅ Available | [OpenAI Codex CLI](https://github.com/openai/codex) |
+| Adapter       | Status      | CLI Tool                                            |
+| ------------- | ----------- | --------------------------------------------------- |
+| `claude-code` | ✅ Available | [Claude Code](https://claude.ai/code)               |
+| `codex`       | ✅ Available | [OpenAI Codex CLI](https://github.com/openai/codex) |
 
 ## Quick Start
 
@@ -123,22 +123,22 @@ Parse by extracting content between the two `=====SUBAGENT_JSON=====` markers, t
 
 ## CLI Reference
 
-| Command | Options | Description |
-|---------|---------|-------------|
-| `subagents` | | List available subagent configurations |
-| `sessions` | `--cwd <path>` | List active sessions, optionally filter by working directory |
-| `open` | `-s, --subagent <name>` `--cwd <path>` `--session <id>` `--timeout <s>` | Create new session or resume existing one |
-| `prompt` | `--session <id>` `--timeout <s>` `<text>` | Send task, blocks until done or approval needed |
-| `approve` | `--session <id>` `--timeout <s>` `[text]` | Approve tool use (Enter). Optional text typed before approval |
-| `allow` | `--session <id>` `--timeout <s>` | Approve and allow all similar operations (Shift+Tab) |
-| `reject` | `--session <id>` `--timeout <s>` `[text]` | Reject tool use (Escape). Optional text sent as new instruction |
-| `cancel` | `--session <id>` | Cancel running task (Escape) |
-| `status` | `--session <id>` | Get internal session state (sync) |
-| `check` | `--session <id>` | Get screen-calibrated state (authoritative, async) |
-| `output` | `--session <id>` `--type <screen\|history>` | Get terminal output |
-| `close` | `--session <id>` | Close session (omit `--session` to close all). History preserved |
-| `delete` | `--session <id>` | Delete session permanently |
-| `exit` | `--session <id>` | Graceful exit (`/exit` command to Claude Code) |
+| Command     | Options                                                                 | Description                                                      |
+| ----------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `subagents` | <br />                                                                  | List available subagent configurations                           |
+| `sessions`  | `--cwd <path>`                                                          | List active sessions, optionally filter by working directory     |
+| `open`      | `-s, --subagent <name>` `--cwd <path>` `--session <id>` `--timeout <s>` | Create new session or resume existing one                        |
+| `prompt`    | `--session <id>` `--timeout <s>` `<text>`                               | Send task, blocks until done or approval needed                  |
+| `approve`   | `--session <id>` `--timeout <s>` `[text]`                               | Approve tool use (Enter). Optional text typed before approval    |
+| `allow`     | `--session <id>` `--timeout <s>`                                        | Approve and allow all similar operations (Shift+Tab)             |
+| `reject`    | `--session <id>` `--timeout <s>` `[text]`                               | Reject tool use (Escape). Optional text sent as new instruction  |
+| `cancel`    | `--session <id>`                                                        | Cancel running task (Escape)                                     |
+| `status`    | `--session <id>`                                                        | Get internal session state (sync)                                |
+| `check`     | `--session <id>`                                                        | Get screen-calibrated state (authoritative, async)               |
+| `output`    | `--session <id>` `--type <screen\|history>`                             | Get terminal output                                              |
+| `close`     | `--session <id>`                                                        | Close session (omit `--session` to close all). History preserved |
+| `delete`    | `--session <id>`                                                        | Delete session permanently                                       |
+| `exit`      | `--session <id>`                                                        | Graceful exit (`/exit` command to Claude Code)                   |
 
 Global option: `-c, --config <path>` — Custom config file path.
 
@@ -190,39 +190,39 @@ Config file: `~/.subagent-cli/config.json` (auto-created on first run with defau
 
 **Top-level**
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
+| Key    | Type     | Default           | Description                                   |
+| ------ | -------- | ----------------- | --------------------------------------------- |
 | `home` | `string` | `~/.subagent-cli` | Override home directory for sessions and data |
-| `port` | `number` | `7100` | App daemon HTTP port |
+| `port` | `number` | `7100`            | App daemon HTTP port                          |
 
-**`idle` — Idle monitoring**
+**`idle`** **— Idle monitoring**
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `idle.timeout` | `number` | `300` | Session idle timeout (seconds). Auto-close when exceeded |
-| `idle.check_interval` | `number` | `30` | How often to check for idle sessions (seconds) |
-| `idle.manager_timeout` | `number` | `120` | App auto-exit delay when no sessions remain (seconds). `-1` to disable |
+| Key                    | Type     | Default | Description                                                            |
+| ---------------------- | -------- | ------- | ---------------------------------------------------------------------- |
+| `idle.timeout`         | `number` | `300`   | Session idle timeout (seconds). Auto-close when exceeded               |
+| `idle.check_interval`  | `number` | `30`    | How often to check for idle sessions (seconds)                         |
+| `idle.manager_timeout` | `number` | `120`   | App auto-exit delay when no sessions remain (seconds). `-1` to disable |
 
-**`terminal` — PTY terminal settings**
+**`terminal`** **— PTY terminal settings**
 
-| Key | Type | Default | Description |
-|-----|------|---------|-------------|
-| `terminal.cols` | `number` | `220` | Terminal width in columns. Wide to prevent line wrapping |
-| `terminal.rows` | `number` | `50` | Terminal height in rows |
-| `terminal.scrollback` | `number` | `5000` | Scrollback buffer size (lines) |
+| Key                   | Type     | Default | Description                                              |
+| --------------------- | -------- | ------- | -------------------------------------------------------- |
+| `terminal.cols`       | `number` | `220`   | Terminal width in columns. Wide to prevent line wrapping |
+| `terminal.rows`       | `number` | `50`    | Terminal height in rows                                  |
+| `terminal.scrollback` | `number` | `5000`  | Scrollback buffer size (lines)                           |
 
-**`subagents.<name>` — Subagent definitions**
+**`subagents.<name>`** **— Subagent definitions**
 
 Each key under `subagents` defines a named subagent that can be used with `open -s <name>`.
 
-| Key | Type | Required | Description |
-|-----|------|----------|-------------|
-| `adapter` | `string` | Yes | Adapter type. Supported: `claude-code`, `codex` |
-| `description` | `string` | Yes | Human-readable description, shown in `subagents` list |
-| `command` | `string` | Yes | CLI command to spawn (e.g., `claude`) |
-| `args` | `string[]` | Yes | Additional command-line arguments |
-| `role` | `string` | No | System prompt sent during session initialization to establish context |
-| `env` | `object` | Yes | Environment variables passed to the spawned process |
+| Key           | Type       | Required | Description                                                           |
+| ------------- | ---------- | -------- | --------------------------------------------------------------------- |
+| `adapter`     | `string`   | Yes      | Adapter type. Supported: `claude-code`, `codex`                       |
+| `description` | `string`   | Yes      | Human-readable description, shown in `subagents` list                 |
+| `command`     | `string`   | Yes      | CLI command to spawn (e.g., `claude`)                                 |
+| `args`        | `string[]` | Yes      | Additional command-line arguments                                     |
+| `role`        | `string`   | No       | System prompt sent during session initialization to establish context |
+| `env`         | `object`   | Yes      | Environment variables passed to the spawned process                   |
 
 **Environment variable handling**:
 
@@ -241,6 +241,7 @@ Access the built-in web terminal at `http://localhost:7100/viewer`.
 - **Session terminal**: `http://localhost:7100/viewer?session=<id>` — real-time interactive terminal
 
 Features:
+
 - Full xterm.js rendering with dark theme
 - Keyboard input forwarding (you can type directly)
 - Dynamic resize with FitAddon
