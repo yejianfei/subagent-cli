@@ -1,6 +1,6 @@
 {
   "name": "subagent-cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Delegate tasks to sub-agent CLI instances (Claude Code, Codex, etc.)",
   "main": "dist/cli.js",
   "bin": {

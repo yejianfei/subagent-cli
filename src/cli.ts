@@ -5,7 +5,7 @@ import { SubagentClient } from './client'
 
 program
   .name('subagent-cli')
-  .version('0.1.0')
+  .version('0.1.1')
   .description('Delegate tasks to sub-agent CLI instances (Claude Code, Codex, etc.)')
   .option('-c, --config <path>', 'Config file path (default: ~/.subagent-cli/config.json)')
   .hook('preAction', () => {
