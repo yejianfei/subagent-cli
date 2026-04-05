@@ -76,6 +76,17 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          BODY=$(sed -n "/^## \[${VERSION}\]/,/^## \[/{ /^## \[${VERSION}\]/d; /^## \[/d; p; }" CHANGELOG.md)
+          echo "body<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$BODY" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -84,5 +95,5 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          generate_release_notes: true
+          body: ${{ steps.changelog.outputs.body }}
           files: subagent-cli-*.tar.gz

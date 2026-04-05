@@ -19,7 +19,8 @@
     "preversion": "npm run lint && npm run build && npm test",
     "version": "grep -q \"## \\[$(node -p 'require(\"./package.json\").version')\\]\" CHANGELOG.md || (echo 'ERROR: CHANGELOG.md missing entry for this version' && exit 1) && git add -A",
     "postversion": "git push origin master --tags",
-    "prepublishOnly": "npm run build",
+    "prepublishOnly": "npm run build && npm run fetch-linux",
+    "fetch-linux": "VERSION=$(node -p 'require(\"./package.json\").version') && curl -sL \"https://github.com/yejianfei/subagent-cli/releases/download/v${VERSION}/subagent-cli-v${VERSION}-linux-x64.tar.gz\" -o /tmp/linux-x64.tar.gz && tar xzf /tmp/linux-x64.tar.gz -C /tmp && mkdir -p dist/lib/linux-x64 && cp /tmp/subagent-cli-v${VERSION}-linux-x64/lib/linux-x64/* dist/lib/linux-x64/ && rm -rf /tmp/linux-x64.tar.gz /tmp/subagent-cli-v${VERSION}-linux-x64 && echo \"Fetched linux-x64 binaries from v${VERSION} release\"",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true"
