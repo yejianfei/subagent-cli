@@ -1,5 +1,5 @@
 {
-  "name": "subagent-cli",
+  "name": "@yejianfei/subagent-cli",
   "version": "0.1.2",
   "description": "Delegate tasks to sub-agent CLI instances (Claude Code, Codex, etc.)",
   "main": "dist/cli.js",

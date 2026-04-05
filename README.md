@@ -74,13 +74,14 @@ The CLI auto-detects the App daemon via TCP probe. If not running, it forks one 
 ## Quick Start
 
 ```bash
-# Clone and build
+# Install from npm
+npm install -g @yejianfei/subagent-cli
+
+# Or clone and build from source
 git clone https://github.com/yejianfei/subagent-cli.git
 cd subagent-cli
 npm install
 npm run build
-
-# Or link globally
 npm link
 
 # 1. List available subagents
