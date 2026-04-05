@@ -3,9 +3,11 @@ import { program } from 'commander'
 import { setConfigPath } from './config'
 import { SubagentClient } from './client'
 
+declare const __VERSION__: string
+
 program
   .name('subagent-cli')
-  .version('0.1.1')
+  .version(__VERSION__)
   .description('Delegate tasks to sub-agent CLI instances (Claude Code, Codex, etc.)')
   .option('-c, --config <path>', 'Config file path (default: ~/.subagent-cli/config.json)')
   .hook('preAction', () => {

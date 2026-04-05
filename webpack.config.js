@@ -3,6 +3,7 @@ const os = require('os');
 const path = require('path');
 const webpack = require('webpack');
 const CopyWebpackPlugin = require('copy-webpack-plugin');
+const pkg = require('./package.json');
 
 // node-pty utils.js shim — replaces the original dynamic require() with
 // __non_webpack_require__ that loads native binaries from dist/lib/ at runtime
@@ -65,6 +66,9 @@ module.exports = {
     'utf-8-validate': 'commonjs utf-8-validate',
   },
   plugins: [
+    new webpack.DefinePlugin({
+      __VERSION__: JSON.stringify(pkg.version),
+    }),
     new webpack.BannerPlugin({
       banner: '#!/usr/bin/env node',
       raw: true,
