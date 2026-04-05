@@ -1,0 +1,6 @@
+node_modules/
+dist/
+doc/
+.claude/
+.agents/
+*.x.bak

@@ -1,0 +1,55 @@
+{
+  "name": "subagent-cli",
+  "version": "0.1.0",
+  "description": "Delegate tasks to sub-agent CLI instances (Claude Code, Codex, etc.)",
+  "main": "dist/cli.js",
+  "bin": {
+    "subagent-cli": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "webpack --mode production",
+    "dev": "webpack --mode development",
+    "watch": "webpack --mode development --watch",
+    "test": "node --test test/app.test.js test/detect.test.js test/screen.test.js test/adapter.test.js",
+    "test:e2e:claude": "npm run build && node --test test/e2e.test.js",
+    "test:e2e:codex": "npm run build && node --test test/e2e-codex.test.js",
+    "postbuild": "chmod +x dist/lib/*/spawn-helper 2>/dev/null || true && printf '#!/usr/bin/env bash\\nexec node \"$(dirname \"$(readlink -f \"$0\" 2>/dev/null || echo \"$0\")\")/cli.js\" \"$@\"\\n' > dist/subagent-cli && chmod +x dist/subagent-cli",
+    "test:all": "npm run build && npm test && npm run test:e2e:claude",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true"
+  },
+  "files": [
+    "dist/"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "@koa/router": "^13.1.0",
+    "@types/koa": "^2.15.0",
+    "@types/koa__router": "^12.0.0",
+    "@types/node": "^22.0.0",
+    "@types/supertest": "^7.2.0",
+    "@types/ws": "^8.5.0",
+    "@typescript-eslint/eslint-plugin": "^8.58.0",
+    "@typescript-eslint/parser": "^8.58.0",
+    "@xterm/headless": "^5.5.0",
+    "commander": "^12.0.0",
+    "copy-webpack-plugin": "^13.0.0",
+    "eslint": "^9.39.4",
+    "globals": "^17.4.0",
+    "koa": "^2.15.0",
+    "node-pty": "^1.1.0",
+    "supertest": "^7.2.2",
+    "ts-loader": "^9.5.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.0",
+    "webpack": "^5.101.0",
+    "webpack-cli": "^5.1.0",
+    "ws": "^8.18.0"
+  }
+}
