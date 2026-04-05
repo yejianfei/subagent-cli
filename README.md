@@ -262,9 +262,9 @@ npm run test:all            # build + unit tests + e2e (full pipeline)
 SUBAGENT_DAEMON=1 node dist/app.js
 ```
 
-**Requirements**: Node.js 18+ (uses built-in `fetch`)
+**Requirements**: Node.js 18+ (uses built-in `fetch`). Windows is not yet supported (macOS and Linux only).
 
-**Tested on**: macOS 15.7 (ARM64), Node.js v18.20, Claude Code 2.1.84, Codex CLI 0.118.0. Other platforms are untested.
+**Tested on**: macOS 15.7 (ARM64), Node.js v18.20, Claude Code 2.1.84, Codex CLI 0.118.0. Linux has not been e2e tested yet.
 
 **Native module note**: `node-pty` requires platform-specific prebuilds. The `postinstall` script automatically runs `chmod +x` on all `spawn-helper` binaries. If you encounter permission issues, run `chmod +x node_modules/node-pty/prebuilds/*/spawn-helper` manually.
 
