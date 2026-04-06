@@ -103,4 +103,24 @@ describe('PtyXterm', () => {
     t.dispose()
     assert.ok(true)
   })
+
+  it('emits exit with non-zero code for invalid command (preflight scenario)', async () => {
+    const t = new PtyXterm(80, 24, 100)
+    const code = await new Promise((resolve) => {
+      t.on('exit', resolve)
+      t.spawn('/nonexistent_command', [], { cwd: process.cwd(), env: process.env })
+    })
+    assert.ok(code !== 0, `Expected non-zero exit code, got ${code}`)
+    t.dispose()
+  })
+
+  it('emits exit with zero code for valid command (preflight scenario)', async () => {
+    const t = new PtyXterm(80, 24, 100)
+    const code = await new Promise((resolve) => {
+      t.on('exit', resolve)
+      t.spawn('echo', ['ok'], { cwd: process.cwd(), env: process.env })
+    })
+    assert.equal(code, 0)
+    t.dispose()
+  })
 })

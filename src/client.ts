@@ -18,16 +18,21 @@ export class SubagentClient {
 
     const realDir = dirname(realpathSync(__filename))
     const appPath = join(realDir, 'app.js')
+    let exitCode: number | null = null
     const child = fork(appPath, [], { detached: true, stdio: 'ignore', env: { ...process.env, SUBAGENT_DAEMON: '1' } })
+    child.on('exit', (code) => { exitCode = code })
     child.unref()
 
     const probed = await Array.from({ length: 50 }).reduce<Promise<boolean>>(async (prev) => {
       if (await prev) return true
+      if (exitCode !== null) return false
       await new Promise(r => setTimeout(r, 100))
       return this.probePort(config.port)
     }, Promise.resolve(false))
     if (probed) return
-    throw new Error('Manager failed to start within 5 seconds')
+    throw new Error(exitCode !== null
+      ? `Manager failed to start (exit ${exitCode}). Check PTY permissions or start manually: SUBAGENT_DAEMON=1 node app.js`
+      : 'Manager failed to start within 5 seconds')
   }
 
   private probePort(port: number): Promise<boolean> {

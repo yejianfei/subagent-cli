@@ -7,6 +7,7 @@ import { join } from 'path'
 import { randomBytes } from 'crypto'
 import { loadConfig, ensureDirs, getHome, type AppConfig } from './config'
 import { createAdapter, SubagentCliAdapter } from './adapter'
+import { PtyXterm } from './pty_xterm'
 import type { OpenParams } from './types'
 
 // Load all adapters (self-register)
@@ -488,7 +489,25 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
 
   // ── Start / Stop ──
 
+  /** Preflight check: verify PTY spawn works before accepting connections */
+  function preflight(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const t = new PtyXterm(80, 24, 100)
+      const timer = setTimeout(() => { t.dispose(); resolve() }, 3000)
+      t.on('exit', (code: number) => {
+        clearTimeout(timer)
+        t.dispose()
+        code === 0 ? resolve() : reject(new Error(
+          `PTY preflight failed (exit ${code}). Likely running in a sandboxed or restricted environment. ` +
+          'Start the daemon manually outside the sandbox: SUBAGENT_DAEMON=1 node app.js'
+        ))
+      })
+      t.spawn('echo', ['ok'], { cwd: getHome(), env: { PATH: process.env.PATH ?? '/usr/bin' } })
+    })
+  }
+
   async function start(): Promise<void> {
+    await preflight()
     httpServer.listen(config.port, () => {
       console.error(`App listening on http://localhost:${config.port}`)
       console.error(`Debug viewer: http://localhost:${config.port}/viewer`)

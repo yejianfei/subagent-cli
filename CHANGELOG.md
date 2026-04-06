@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.4] - 2026-04-06
+
+### Added
+- PTY preflight check: app daemon verifies spawn capability before accepting connections
+- Sandbox detection: fast-fail with clear error message instead of hanging forever
+- PtyXterm spawn failure tests (valid/invalid command exit codes)
+
 ## [0.1.3] - 2026-04-05
 
 ### Changed
