@@ -111,6 +111,46 @@ export abstract class SubagentCliAdapter extends EventEmitter {
   }
 
   /**
+   * Extract last sub-agent reply from raw terminal text.
+   * Uses prompt_marker and chrome_words from DetectRules — fully generic.
+   */
+  protected getLastOutput(rawText: string): string {
+    const { prompt_marker, chrome_words } = this.getAdapterDetectRules()
+    const markerEsc = prompt_marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    const lines = rawText.split('\n')
+
+    // Find last user prompt: marker + real content (exclude menu items like "❯ 1.")
+    let startIdx = 0
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const t = lines[i].trim()
+      if (t.startsWith(prompt_marker) && t.length > prompt_marker.length + 1
+          && !new RegExp(`^${markerEsc}\\s+\\d+\\.`).test(t)) {
+        startIdx = i + 1
+        break
+      }
+    }
+
+    // Trim TUI chrome from bottom
+    let endIdx = lines.length
+    for (let i = lines.length - 1; i >= startIdx; i--) {
+      const t = lines[i].trim()
+      if (t === '' || /^[─╌]{3,}$/.test(t) || new RegExp(`^${markerEsc}[\\s\\u00a0]*$`).test(t)
+          || chrome_words.some(w => t.includes(w))) {
+        endIdx = i
+      } else {
+        break
+      }
+    }
+
+    return lines.slice(startIdx, endIdx).join('\n').trim()
+  }
+
+  private async fetchLastOutput(): Promise<string> {
+    await this.terminal.flush()
+    return this.getLastOutput(this.terminal.capture())
+  }
+
+  /**
    * Initialization hook. Called after spawn with state = INITING.
    * Default: wait for detection engine to detect IDLE (exec 'ready').
    * Subclasses override to handle startup dialogs, MCP boot, etc.
@@ -165,6 +205,10 @@ export abstract class SubagentCliAdapter extends EventEmitter {
       this.terminal.write('\r')
     })
 
+    if (r.status === 'done') {
+      r.output = await this.fetchLastOutput()
+      this.history.log('output', r.output)
+    }
     this.history.log(r.status, r.approval ? `tool: ${r.approval.tool}, target: ${r.approval.target}` : 'done')
     if (r.status === 'approval_needed') {
       const approval = await this.getQuestion()
@@ -196,6 +240,10 @@ export abstract class SubagentCliAdapter extends EventEmitter {
       }
     })
 
+    if (r.status === 'done') {
+      r.output = await this.fetchLastOutput()
+      this.history.log('output', r.output)
+    }
     this.history.log(r.status, r.approval ? `tool: ${r.approval.tool}, target: ${r.approval.target}` : 'done')
     if (r.status === 'approval_needed') {
       const approval = await this.getQuestion()
@@ -223,6 +271,10 @@ export abstract class SubagentCliAdapter extends EventEmitter {
       this.terminal.write('\r')
     })
 
+    if (r.status === 'done') {
+      r.output = await this.fetchLastOutput()
+      this.history.log('output', r.output)
+    }
     this.history.log(r.status, r.approval ? `tool: ${r.approval.tool}, target: ${r.approval.target}` : 'done')
     if (r.status === 'approval_needed') {
       const approval = await this.getQuestion()
@@ -250,6 +302,10 @@ export abstract class SubagentCliAdapter extends EventEmitter {
       this.terminal.write('\r')
     })
 
+    if (r.status === 'done') {
+      r.output = await this.fetchLastOutput()
+      this.history.log('output', r.output)
+    }
     this.history.log(r.status, r.approval ? `tool: ${r.approval.tool}, target: ${r.approval.target}` : 'done')
     if (r.status === 'approval_needed') {
       const approval = await this.getQuestion()
@@ -286,11 +342,16 @@ export abstract class SubagentCliAdapter extends EventEmitter {
     }
   }
 
-  async getOutput(type: 'screen' | 'history' = 'screen'): Promise<OutputResult> {
+  async getOutput(type: 'screen' | 'history' | 'last' = 'screen'): Promise<OutputResult> {
     await this.terminal.flush()
-    const content = type === 'history'
-      ? this.terminal.capture(this.terminal.totalLines)
-      : this.terminal.capture()
+    let content: string
+    if (type === 'last') {
+      content = this.getLastOutput(this.terminal.capture())
+    } else if (type === 'history') {
+      content = this.terminal.capture(this.terminal.totalLines)
+    } else {
+      content = this.terminal.capture()
+    }
     return { type, content, lines: content.split('\n').length }
   }
 

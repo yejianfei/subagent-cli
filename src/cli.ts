@@ -18,14 +18,18 @@ program
 Workflow:
   1. subagent-cli subagents                      # list available subagents
   2. subagent-cli open -s haiku --cwd .            # start session, returns session ID
-  3. subagent-cli prompt --session <id> "task"   # send task, blocks until done or approval needed
-  4. subagent-cli approve --session <id>         # approve tool use (Enter)
+  3. subagent-cli prompt --session <id> "task"   # send task, done returns output field
+  4. subagent-cli approve --session <id>         # approve tool use, done returns output
      subagent-cli approve --session <id> "text"  # type selection/message, then approve
      subagent-cli reject --session <id> "reason" # reject with instruction (Escape + text)
      subagent-cli allow --session <id>           # allow all for this session (Shift+Tab)
-  5. subagent-cli close --session <id>           # stop session (history kept)
+  5. subagent-cli output --session <id> --type last  # get last reply (TUI chrome stripped)
+  6. subagent-cli close --session <id>           # stop session (history kept)
 
-All commands output JSON: { "success": bool, "code": number, "data": { ... } }
+All commands output JSON wrapped in delimiters:
+  =====SUBAGENT_JSON=====
+  { "success": bool, "code": number, "data": { ... } }
+  =====SUBAGENT_JSON=====
 
 Session recovery:
   subagent-cli sessions --cwd .                  # find sessions by working directory
@@ -88,7 +92,7 @@ program
 
 program
   .command('prompt <text>')
-  .description('Send a prompt to a session (blocks until done or approval needed)')
+  .description('Send a prompt (blocks until done or approval needed). Done includes extracted output')
   .requiredOption('--session <id>', 'Session ID')
   .option('--timeout <seconds>', 'Task timeout in seconds (0 = no timeout)', '0')
   .action(async (text, opts) => {
@@ -97,7 +101,7 @@ program
 
 program
   .command('approve [text]')
-  .description('Approve pending tool use (Enter). Optional [text] for amend (claude-code only, ignored by codex)')
+  .description('Approve pending tool use (Enter). Done includes extracted output. Optional [text] for amend (claude-code only)')
   .requiredOption('--session <id>', 'Session ID')
   .option('--timeout <seconds>', 'Task timeout in seconds (0 = no timeout)', '0')
   .action(async (text, opts) => {
@@ -140,9 +144,9 @@ program
 
 program
   .command('output')
-  .description('Get session output (screen or history)')
+  .description('Get session output (screen, history, or last extracted reply)')
   .requiredOption('--session <id>', 'Session ID')
-  .option('--type <type>', 'Output type: screen | history', 'screen')
+  .option('--type <type>', 'Output type: screen | history | last', 'screen')
   .action(async (opts) => {
     await output(await client().output(opts.session, opts.type))
   })

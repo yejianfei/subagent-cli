@@ -145,6 +145,9 @@ export class ClaudeCodeAdapter extends SubagentCliAdapter {
       idle_words: ['shortcuts', 'accept edits'],
       running_words: ['esc to interrupt'],
       asking_words: ['Esc to cancel', 'I trust'],
+      prompt_marker: '❯',
+      chrome_words: ['shortcuts', 'accept edits', 'Update available', 'brew upgrade',
+                     'Esc to cancel', 'Tab to amend'],
     }
   }
 

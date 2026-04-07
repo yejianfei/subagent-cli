@@ -103,7 +103,7 @@ webpack.config.js            # webpack 配置 (双入口 + externals)
 | POST | `/api/session/:id/reject` | **长轮询** | 拒绝审批 (Escape)，可附带新指令 |
 | GET | `/api/session/:id/status` | 否 | 查询内部状态（同步，快速） |
 | GET | `/api/session/:id/check` | 否 | 屏幕校准状态（async，flush+capture 底部 5 行 → detect） |
-| GET | `/api/session/:id/output/:type` | 否 | 获取输出 (screen/history) |
+| GET | `/api/session/:id/output/:type` | 否 | 获取输出 (screen/history/last) |
 | POST | `/api/session/:id/close` | 否 | 关闭 session（保留 history） |
 | DELETE | `/api/session/:id` | 否 | 删除 session（彻底清除目录） |
 | POST | `/api/close` | 否 | 关闭全部 session（保留 history） |
@@ -111,10 +111,12 @@ webpack.config.js            # webpack 配置 (双入口 + externals)
 **统一响应**: CLI stdout 输出 JSON 前后包裹定界符 `=====SUBAGENT_JSON=====`，便于从大输出中可靠提取：
 ```
 =====SUBAGENT_JSON=====
-{ "success": bool, "code": number, "data": { "session": "...", ... } }
+{ "success": bool, "code": number, "data": { "session": "...", "status": "done", "output": "..." } }
 =====SUBAGENT_JSON=====
 ```
 HTTP API 响应不含定界符，直接返回 JSON。
+
+**prompt/approve/reject/allow 完成时**，`data.output` 包含提取后的子 agent 回复（去除 TUI chrome），主 agent 无需额外调用 `output --type last`。
 
 **错误码**: `SESSION_NOT_FOUND` (404), `SESSION_BUSY` (409), `SESSION_NOT_READY` (503), `INVALID_STATE` (400), `TIMEOUT` (408), `SUBAGENT_NOT_FOUND` (400)
 
@@ -139,7 +141,8 @@ HTTP API 响应不含定界符，直接返回 JSON。
 - **History 自主记录**: `open(params, session, home, timeout)` 传入目录后，自动追加 `history.md`
 - **`getPrompts()`**: 从 history.md 提取所有 prompt 文本，供 `GET /api/sessions` 返回
 - **Re-spawn 支持**: `terminal.spawn()` 内部 kill + `term.reset()` + 启动新进程，无需子类手动重置
-- **Output 策略**: `approval_needed` 由上层调 `getQuestion()` 获取审批上下文（flush+capture+正则）；完整屏幕通过 `getOutput('screen')` 获取
+- **Output 策略**: `approval_needed` 由上层调 `getQuestion()` 获取审批上下文（flush+capture+正则）；完整屏幕通过 `getOutput('screen')` 获取；`getOutput('last')` 提取最后一轮子 agent 回复（去除 TUI chrome）
+- **Last Output 提取**: `getLastOutput(rawText)` 用 `prompt_marker` 反向查找用户 prompt 行，向下截取到 `chrome_words` 前，返回纯回复内容。`fetchLastOutput()` 在 done 时自动调用，结果附在 `PromptResult.output` 并记录到 history
 - **超时控制**: `exec(event, timeoutMs, before?)` 统一管理，timeout=0 不超时
 - **检测引擎**: 500ms 定时器轮询 `capture(totalLines) + detect()`，替代旧的 onChunk 被动检测，彻底消除跨 chunk 边界检测丢失问题
 - **定时器生命周期**: `startDetection()` 在 spawn 后启动（幂等），`stopDetection()` 在 close/exit 时停止。始终运行，不检查状态
@@ -151,7 +154,7 @@ HTTP API 响应不含定界符，直接返回 JSON。
 
 ### 子类最少提供 2 项
 
-1. `getAdapterDetectRules(): DetectRules` — 返回 match_words / idle_words / running_words / asking_words / input_keys / probe（可选）
+1. `getAdapterDetectRules(): DetectRules` — 返回 match_words / idle_words / running_words / asking_words / input_keys / probe（可选）/ prompt_marker / chrome_words
 2. `getQuestion(): Promise<ApprovalInfo>` — ASKING 时提取审批信息（flush+capture+正则）
 
 可选覆写：

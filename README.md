@@ -89,15 +89,21 @@ subagent-cli subagents
 
 # 2. Open a session (App starts automatically if not running)
 subagent-cli open -s haiku --cwd /path/to/project
-# → { "data": { "session": "a1b2c3d4", "state": "IDLE" } }
+# → =====SUBAGENT_JSON=====
+# → { "success": true, "code": 200, "data": { "session": "a1b2c3d4" } }
+# → =====SUBAGENT_JSON=====
 
 # 3. Send a task
 subagent-cli prompt --session a1b2c3d4 "Create a hello world Express server"
-# → { "data": { "status": "approval_needed", "question": "Write to server.js" } }
+# → =====SUBAGENT_JSON=====
+# → { "success": true, "code": 200, "data": { "session": "a1b2c3d4", "status": "approval_needed", "approval": { "tool": "Write", "target": "server.js" } } }
+# → =====SUBAGENT_JSON=====
 
 # 4. Approve tool use
 subagent-cli approve --session a1b2c3d4
-# → { "data": { "status": "done" } }
+# → =====SUBAGENT_JSON=====
+# → { "success": true, "code": 200, "data": { "session": "a1b2c3d4", "status": "done", "output": "⏺ Write(server.js)\n  ⎿ Wrote 10 lines..." } }
+# → =====SUBAGENT_JSON=====
 
 # Or reject / amend / allow-all:
 subagent-cli reject --session a1b2c3d4 "Use Koa instead"
@@ -135,7 +141,7 @@ Parse by extracting content between the two `=====SUBAGENT_JSON=====` markers, t
 | `cancel`    | `--session <id>`                                                        | Cancel running task (Escape)                                     |
 | `status`    | `--session <id>`                                                        | Get internal session state (sync)                                |
 | `check`     | `--session <id>`                                                        | Get screen-calibrated state (authoritative, async)               |
-| `output`    | `--session <id>` `--type <screen\|history>`                             | Get terminal output                                              |
+| `output`    | `--session <id>` `--type <screen\|history\|last>`                      | Get terminal output (`last` = extracted sub-agent reply)         |
 | `close`     | `--session <id>`                                                        | Close session (omit `--session` to close all). History preserved |
 | `delete`    | `--session <id>`                                                        | Delete session permanently                                       |
 | `exit`      | `--session <id>`                                                        | Graceful exit (`/exit` command to Claude Code)                   |
@@ -281,11 +287,12 @@ Use `subagent-cli` for delegating subtasks. Run `subagent-cli --help` for all co
 Core workflow:
 
 1. `subagent-cli open -s haiku --cwd .`            - Start session, returns session ID
-2. `subagent-cli prompt --session <id> "task"`     - Send task, blocks until done or approval
-3. `subagent-cli approve --session <id>`           - Approve tool use (Enter)
+2. `subagent-cli prompt --session <id> "task"`     - Send task, blocks until done or approval. Done returns `output` field with extracted reply
+3. `subagent-cli approve --session <id>`           - Approve tool use (Enter). Done returns `output`
    `subagent-cli reject --session <id> "reason"`   - Reject with new instruction (Escape)
    `subagent-cli allow --session <id>`             - Allow all similar operations (Shift+Tab)
-4. `subagent-cli close --session <id>`             - Close session (history kept)
+4. `subagent-cli output --session <id> --type last` - Get last sub-agent reply (TUI chrome stripped)
+5. `subagent-cli close --session <id>`             - Close session (history kept)
 
 Session recovery:
   `subagent-cli sessions --cwd .`                  - Find sessions by working directory

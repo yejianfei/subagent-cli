@@ -176,6 +176,8 @@ export class CodexAdapter extends SubagentCliAdapter {
       running_words: ['esc to interrupt', 'tab to queue'],
       asking_words: ['esc to cancel'],
       probe: ' ',
+      prompt_marker: '›',
+      chrome_words: ['% left', 'context left', 'esc to cancel', 'Press enter to confirm'],
     }
   }
 }

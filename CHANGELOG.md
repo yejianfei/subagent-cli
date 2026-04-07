@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.5] - 2026-04-07
+
+### Added
+- `output --type last`: extract last sub-agent reply with TUI chrome stripped
+- `PromptResult.output`: prompt/approve/reject/allow done responses now return extracted reply content by default
+- `DetectRules.prompt_marker` + `chrome_words`: config-driven output extraction per adapter
+- History auto-records `output` entries on task completion
+
 ## [0.1.4] - 2026-04-06
 
 ### Added

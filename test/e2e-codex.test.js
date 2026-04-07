@@ -247,6 +247,13 @@ describe('E2E: Codex single session', { timeout: 900_000 }, () => {
       console.log(`    Already done (state: ${status.data.state})`)
     }
     await assertCheck(sessionId, 'IDLE')
+    // Verify output last has content after task completion
+    const port = getPort()
+    const res = await fetch(`http://localhost:${port}/api/session/${sessionId}/output/last`)
+    const last = await res.json()
+    assert.equal(last.success, true)
+    assert.ok(last.data.content.length > 0, 'output last should have content after done')
+    console.log(`    Output last: ${last.data.lines} lines, ${last.data.content.length} chars`)
   })
 
   it('⑤ disk: JS file exists with expected content', () => {
@@ -397,6 +404,17 @@ describe('E2E: Codex single session', { timeout: 900_000 }, () => {
     const { json } = await cli(['output', '--session', sessionId, '--type', 'screen'])
     assert.equal(json.success, true)
     console.log(`    Screen: ${json.data.lines} lines, ${json.data.content.length} chars`)
+  })
+
+  it('⑮½ output last → extracted reply without TUI chrome', async () => {
+    const port = getPort()
+    const res = await fetch(`http://localhost:${port}/api/session/${sessionId}/output/last`)
+    const last = await res.json()
+    assert.equal(last.success, true)
+    assert.ok(last.data.content.length > 0, 'Last output should not be empty')
+    // Should NOT contain TUI chrome
+    assert.ok(!last.data.content.includes('% left'), 'Should not contain status bar')
+    console.log(`    Last:   ${last.data.lines} lines, ${last.data.content.length} chars`)
   })
 
   // ── Close → Resume ──

@@ -24,6 +24,7 @@ export interface ApprovalInfo {
 export interface PromptResult {
   status: 'done' | 'approval_needed' | 'waiting'
   approval?: ApprovalInfo
+  output?: string
 }
 
 export interface SessionStatus {
@@ -34,7 +35,7 @@ export interface SessionStatus {
 }
 
 export interface OutputResult {
-  type: 'screen' | 'history'
+  type: 'screen' | 'history' | 'last'
   content: string
   lines: number
 }
@@ -56,4 +57,8 @@ export interface DetectRules {
   /** Probe character sent once on entering RUNNING to trigger a running indicator.
    *  E.g. Codex shows "tab to queue message" when input is non-empty during RUNNING. */
   probe?: string
+  /** Prompt marker character used to identify user prompt lines (e.g. '❯' for Claude Code, '›' for Codex) */
+  prompt_marker: string
+  /** Keywords in TUI chrome lines (status bars, dialogs) to trim from output extraction */
+  chrome_words: string[]
 }

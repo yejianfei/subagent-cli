@@ -514,6 +514,11 @@ describe('E2E: Single session real task', { timeout: 900_000 }, () => {
     if (json.data.status === 'approval_needed') {
       console.warn('    \x1b[33m⚠ FALLBACK: Claude used tools despite instruction, auto-approving\x1b[0m')
       await approveLoop(sessionId)
+    } else {
+      // Verify output field on done
+      assert.ok(json.data.output, 'done result should include output field')
+      assert.ok(json.data.output.length > 0, 'output should not be empty')
+      console.log(`    Output: ${json.data.output.length} chars`)
     }
     await assertCheck(sessionId, 'IDLE')
   })
@@ -531,6 +536,26 @@ describe('E2E: Single session real task', { timeout: 900_000 }, () => {
       'Screen should contain meaningful code/text content'
     )
     console.log(`    Screen: ${json.data.lines} lines, ${json.data.content.length} chars`)
+  })
+
+  it('㉓½ output last → extracted sub-agent reply without TUI chrome', async () => {
+    const port = getPort()
+    const res = await fetch(`http://localhost:${port}/api/session/${sessionId}/output/last`)
+    const last = await res.json()
+    assert.equal(last.success, true)
+    assert.ok(last.data.content.length > 0, 'Last output should not be empty')
+    assert.ok(last.data.lines > 0)
+    // Should NOT contain TUI chrome
+    assert.ok(!last.data.content.includes('? for shortcuts'), 'Should not contain status bar')
+    assert.ok(!last.data.content.includes('Update available'), 'Should not contain update notice')
+    // Should contain meaningful content
+    const content = last.data.content.toLowerCase()
+    assert.ok(
+      content.includes('event') || content.includes('function') || content.includes('class')
+      || content.includes('emitter') || content.includes('const'),
+      'Last output should contain meaningful content'
+    )
+    console.log(`    Last:   ${last.data.lines} lines, ${last.data.content.length} chars`)
   })
 
   it('㉔ output history → full scrollback (larger than screen)', async () => {
