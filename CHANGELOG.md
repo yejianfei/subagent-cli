@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.6] - 2026-04-08
+
+### Fixed
+- `approve()` returns done without effect when approving large file diffs — Ctrl+E collapses the diff panel (`ctrl+e to hide`), removing `"Esc to cancel"` from screen, causing detection engine to falsely detect IDLE
+- `getQuestion()` now toggles explain panel closed after capture, restoring normal approval screen
+- `onIdle()` no longer transitions from ASKING to IDLE — ASKING state can only exit via approve/reject/allow
+
 ## [0.1.5] - 2026-04-07
 
 ### Added

@@ -98,6 +98,45 @@ describe('Adapter base class behavior', () => {
     })
   })
 
+  // ── onIdle defense: ASKING state not downgraded by detection ──
+
+  describe('onIdle ignores ASKING state', () => {
+    it('ASKING state is preserved when detection sees IDLE', () => {
+      const a = new TestableAdapter()
+      a.state = 'ASKING'
+      // Simulate detection engine calling onIdle (private, so trigger via emit pattern)
+      // onIdle is called by detection when detect() returns IDLE.
+      // After fix, onIdle should NOT transition ASKING → IDLE.
+      // We verify by checking that no 'done' event is emitted and state stays ASKING.
+      let emitted = false
+      a.once('done', () => { emitted = true })
+      // Access private onIdle via prototype trick
+      Object.getPrototypeOf(Object.getPrototypeOf(a))['onIdle'].call(a)
+      assert.equal(a.getState(), 'ASKING', 'state must remain ASKING')
+      assert.equal(emitted, false, 'done event must not be emitted')
+    })
+
+    it('PENDING → IDLE still works (legitimate transition)', () => {
+      const a = new TestableAdapter()
+      a.state = 'PENDING'
+      let emitted = false
+      a.once('done', () => { emitted = true })
+      Object.getPrototypeOf(Object.getPrototypeOf(a))['onIdle'].call(a)
+      assert.equal(a.getState(), 'IDLE')
+      assert.equal(emitted, true)
+    })
+
+    it('RUNNING → IDLE still works (legitimate transition)', () => {
+      const a = new TestableAdapter()
+      a.state = 'RUNNING'
+      let emitted = false
+      a.once('done', () => { emitted = true })
+      Object.getPrototypeOf(Object.getPrototypeOf(a))['onIdle'].call(a)
+      assert.equal(a.getState(), 'IDLE')
+      assert.equal(emitted, true)
+    })
+  })
+
   // ── Cancel idempotent behavior ──
 
   describe('cancel on non-RUNNING state', () => {

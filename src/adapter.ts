@@ -461,7 +461,6 @@ export abstract class SubagentCliAdapter extends EventEmitter {
         break
       case 'PENDING':
       case 'RUNNING':
-      case 'ASKING':
         this.state = 'IDLE'
         this.emit('done', { status: 'done' } as PromptResult)
         break

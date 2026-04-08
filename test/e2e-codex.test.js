@@ -304,11 +304,13 @@ describe('E2E: Codex single session', { timeout: 900_000 }, () => {
 
   // ── Consecutive approvals ──
 
-  it('⑨ prompt: create two files → consecutive approvals', async () => {
+  it('⑨ prompt: create two large files → consecutive approvals (triggers folded diff)', async () => {
     await assertCheck(sessionId, 'IDLE')
     const json = await sendPrompt(sessionId,
-      'Create two separate files in the current directory: test-emitter.js (unit tests) '
-      + 'and bench-emitter.js (performance benchmarks). You must create two separate files, do not merge them.')
+      'Create two separate files in the current directory:\n'
+      + '1. test-emitter.js — unit tests with at least 15 test cases and JSDoc for each (must be over 80 lines)\n'
+      + '2. bench-emitter.js — performance benchmarks with at least 10 benchmarks and JSDoc for each (must be over 80 lines)\n'
+      + 'You must create two separate files, do not merge them.')
     assert.equal(json.success, true)
     console.log(`    Status: ${json.data.status}`)
   })

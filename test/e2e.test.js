@@ -434,12 +434,14 @@ describe('E2E: Single session real task', { timeout: 900_000 }, () => {
 
   // ── Consecutive approvals ──
 
-  it('⑱ prompt: create two files → consecutive approvals', async () => {
+  it('⑱ prompt: create two large files → consecutive approvals (triggers folded diff)', async () => {
     await assertCheck(sessionId, 'IDLE')
     const { json } = await cli([
       'prompt',
-      'Create two separate files in the current directory: test-emitter.js (unit tests) '
-      + 'and bench-emitter.js (performance benchmarks). You must create two separate files, do not merge them.',
+      'Create two separate files in the current directory:\n'
+      + '1. test-emitter.js — unit tests with at least 15 test cases and JSDoc for each (must be over 80 lines)\n'
+      + '2. bench-emitter.js — performance benchmarks with at least 10 benchmarks and JSDoc for each (must be over 80 lines)\n'
+      + 'You must create two separate files, do not merge them.',
       '--session', sessionId,
     ], 660_000)
     assert.equal(json.success, true)

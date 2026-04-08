@@ -204,6 +204,7 @@ AgentState = 'OPENING' | 'INITING' | 'IDLE' | 'PENDING' | 'RUNNING' | 'ASKING' |
 - **INITING 状态**：OPENING 后立即进入，子类 `onInit()` 在此阶段处理启动对话框。定时器检测到 IDLE 时 emit `ready`，检测到 ASKING 时自动确认（trust dialog）
 - **检测引擎**：500ms 定时器轮询 `capture(totalLines) + detect()`
 - **detect() 优先级**：asking_words(`Esc to cancel`/`I trust`) > running_words(`esc to interrupt`/`tab to queue`) > idle_words(`shortcuts`/`accept edits`)
+- **onIdle() 防御**：ASKING 状态不受检测引擎降级为 IDLE，只能通过 approve/reject/allow → PENDING → RUNNING → IDLE 路径退出
 - **check() 主动校准**：flush + capture(5) 屏幕底部 → detect(bottom)，返回校准状态（只读不写）
 - **init 阶段不可见**：session 在 IDLE 后才注册到 sessions map
 

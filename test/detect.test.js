@@ -10,6 +10,14 @@ class TestableClaudeCode extends ClaudeCodeAdapter {
   testGetLastOutput(rawText) {
     return this.getLastOutput(rawText)
   }
+  detectState(text) {
+    const rules = this.getAdapterDetectRules()
+    if (!rules.match_words.some(w => text.includes(w))) return null
+    if (rules.asking_words.some(w => text.includes(w))) return 'ASKING'
+    if (rules.running_words.some(w => text.includes(w))) return 'RUNNING'
+    if (rules.idle_words.some(w => text.includes(w))) return 'IDLE'
+    return null
+  }
 }
 
 class TestableCodex extends CodexAdapter {
@@ -174,6 +182,97 @@ describe('CodexAdapter detect() state detection', () => {
     const a = new TestableCodex()
     const text = 'esc to cancel esc to interrupt'
     assert.equal(a.detectState(text), 'ASKING')
+  })
+
+})
+
+// ══════════════════════════════════════════════════════════════════
+// ClaudeCode state detection (real screen samples from kimi task)
+// ══════════════════════════════════════════════════════════════════
+
+describe('ClaudeCodeAdapter detect() state detection', () => {
+
+  // Real IDLE screen from user log — bottom of TUI after task completes
+  it('detects IDLE from real Claude Code screen', () => {
+    const a = new TestableClaudeCode()
+    const screen = [
+      '⏺ 所有测试通过。任务完成。',
+      '',
+      '  修改的文件路径清单：',
+      '',
+      '  1. 新增 src/main/java/com/dofunc/twenx/trace/TraceAuditLogActionRegistry.java',
+      '  2. 修改 src/main/java/com/dofunc/twenx/trace/TraceAuditLogEvent.java',
+      '',
+      '✻ Sautéed for 3m 59s',
+      '',
+      '───────────────────────────────────────────────────────────────────────────────────────',
+      '❯',
+      '───────────────────────────────────────────────────────────────────────────────────────',
+      '  ? for shortcuts                                                                 Update available! Run: brew upgrade claude-code',
+    ].join('\n')
+    assert.equal(a.detectState(screen), 'IDLE')
+  })
+
+  // Real ASKING screen — approval dialog with tool use
+  it('detects ASKING from real approval dialog', () => {
+    const a = new TestableClaudeCode()
+    const screen = [
+      '⏺ Write(src/main/java/com/dofunc/twenx/trace/TraceAuditLogActionRegistry.java)',
+      '',
+      '───────────────────────────────────────────────────────────────────────────────────────',
+      ' Create file',
+      ' src/main/java/com/dofunc/twenx/trace/TraceAuditLogActionRegistry.java',
+      '╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌',
+      '  1 package com.dofunc.twenx.trace;',
+      '  2',
+      '  3 import java.lang.reflect.Method;',
+      '╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌',
+      ' Do you want to create TraceAuditLogActionRegistry.java?',
+      ' ❯ 1. Yes',
+      '   2. Yes, allow all edits during this session (shift+tab)',
+      '   3. No',
+      '',
+      ' Esc to cancel · Tab to amend',
+    ].join('\n')
+    assert.equal(a.detectState(screen), 'ASKING')
+  })
+
+  // RUNNING screen
+  it('detects RUNNING from real running screen', () => {
+    const a = new TestableClaudeCode()
+    const screen = [
+      '⏺ Now let me read the test file.',
+      '',
+      '⏺ Read(src/test/java/com/dofunc/twenx/trace/TraceAuditLogFilterTest.java)',
+      '',
+      '───────────────────────────────────────────────────────────────────────────────────────',
+      '❯',
+      '───────────────────────────────────────────────────────────────────────────────────────',
+      '  esc to interrupt                                                                 Update available! Run: brew upgrade claude-code',
+    ].join('\n')
+    assert.equal(a.detectState(screen), 'RUNNING')
+  })
+
+  // Explain panel screen: detect() returns IDLE (correct — pure text matching).
+  // The fix is in onIdle() which no longer transitions from ASKING.
+  it('explain panel screen: detect returns IDLE (known, guarded by onIdle)', () => {
+    const a = new TestableClaudeCode()
+    const screen = [
+      '⏺ Write(src/main/java/com/dofunc/twenx/trace/TraceAuditLogActionRegistry.java)',
+      '',
+      '  ⎿  Wrote 75 lines to src/main/java/com/dofunc/twenx/trace/TraceAuditLogActionRegistry.java',
+      '       1 package com.dofunc.twenx.trace;',
+      '       2',
+      '       3 import java.lang.reflect.Method;',
+      '',
+      '───────────────────────────────────────────────────────────────────────────────────────',
+      '❯',
+      '───────────────────────────────────────────────────────────────────────────────────────',
+      '  ? for shortcuts                                                                 Update available! Run: brew upgrade claude-code',
+    ].join('\n')
+    // Has ❯ + "shortcuts" but no "Esc to cancel" → detect returns IDLE.
+    // This is correct for detect(). The defense is onIdle() ignoring ASKING state.
+    assert.equal(a.detectState(screen), 'IDLE')
   })
 
 })

@@ -102,9 +102,11 @@ export class ClaudeCodeAdapter extends SubagentCliAdapter {
       await this.terminal.flush()
     }
     const screenText = this.terminal.capture()
-
-    // NOTE: explain panel stays open. approve() uses Enter which works.
-    // reject()/allow() close it with Esc before sending arrow keys.
+    // Close explain panel (toggle off) to restore normal approval screen
+    if (rules.input_keys.explain) {
+      this.terminal.write(rules.input_keys.explain)
+      await this.wait(300)
+    }
 
     // Trust dialog
     if (/(?:trust\s+this\s+folder|one\s+you\s+trust)/i.test(screenText)) {
