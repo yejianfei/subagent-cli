@@ -1,6 +1,6 @@
 import { SubagentCliAdapter, registerAdapter } from '../adapter'
 import { loadConfig } from '../config'
-import type { OpenParams, OpenResult, PromptResult, DetectRules, ApprovalInfo } from '../types'
+import type { OpenParams, OpenResult, DetectRules, ApprovalInfo } from '../types'
 
 const SESSION_ID_RE = /codex resume\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i
 
@@ -42,9 +42,12 @@ export class CodexAdapter extends SubagentCliAdapter {
    *   4. Real IDLE (shows "% left", no "Booting") → done
    */
   protected async onInit(_timeoutMs: number): Promise<void> {
+    const { probe } = this.getAdapterDetectRules()
     const maxIterations = 60
     for (let i = 0; i < maxIterations; i++) {
       await this.wait(2000)
+      if (probe) this.terminal.write(probe)
+      await this.wait(300)
       await this.terminal.flush()
       const screen = this.terminal.capture(this.terminal.totalLines)
 
@@ -86,12 +89,21 @@ export class CodexAdapter extends SubagentCliAdapter {
     // Phase 2: send init prompt to create session
     const subCfg = cfg.subagents[params.subagent]
     const initPrompt = subCfg?.role ?? 'hi'
-    await this.exec<PromptResult>('done', ms, async () => {
-      this.terminal.write(initPrompt, true)
-      await this.wait(500)
-      this.state = 'RUNNING'
-      this.terminal.write('\r')
-    })
+    this.terminal.write(initPrompt, true)
+    await this.wait(500)
+    this.terminal.write('\r')
+    this.state = 'RUNNING'
+    // Wait for response to complete — poll for IDLE (same as onInit)
+    for (let i = 0; i < 60; i++) {
+      await this.wait(2000)
+      await this.terminal.flush()
+      const screen = this.terminal.capture(this.terminal.totalLines)
+      if ((screen.includes('% left') || screen.includes('· /'))
+          && !screen.includes('esc to interrupt')) {
+        this.state = 'IDLE'
+        break
+      }
+    }
 
     // Phase 3: wait for TUI to settle, then send /quit
     await this.wait(2000)

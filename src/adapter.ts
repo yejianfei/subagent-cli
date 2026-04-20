@@ -429,7 +429,7 @@ export abstract class SubagentCliAdapter extends EventEmitter {
     this.detectTimer = setInterval(async () => {
       if (!this.terminal) return
       await this.terminal.flush()
-      const screen = this.terminal.capture()
+      const screen = this.terminal.capture(this.terminal.totalLines)
       const result = this.detect(screen)
       switch (result) {
         case 'ASKING':

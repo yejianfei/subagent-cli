@@ -1,10 +1,20 @@
 # Changelog
 
+## [0.1.8] - 2026-04-20
+
+### Fixed
+- Detection engine: add `flush()` before `capture()` to ensure xterm buffer has latest PTY data
+- Codex adapter: add `· /` to match_words/idle_words for Codex v0.121.0 (status bar no longer shows `% left`)
+- Codex adapter: `onInit()` sends probe to trigger TUI render when buffer is empty
+- Codex adapter: Phase 2 (role prompt) uses independent polling instead of detection engine, fixing init stuck on RUNNING with Codex v0.121.0
+
 ## [0.1.7] - 2026-04-20
 
 ### Fixed
-- Detection engine now flushes xterm buffer and reads visible screen only (not full scrollback), fixing missed state transitions with Codex v0.121.0
-- Codex adapter: add `· /` to match_words/idle_words for compatibility with Codex v0.121.0 (status bar no longer shows `% left`)
+- Detection engine: add `flush()` before `capture()` to ensure xterm buffer has latest PTY data
+- Codex adapter: add `· /` to match_words/idle_words for Codex v0.121.0 (status bar no longer shows `% left`)
+- Codex adapter: `onInit()` sends probe to trigger TUI render when buffer is empty
+- Codex adapter: Phase 2 (role prompt) uses independent polling instead of detection engine, fixing init stuck on RUNNING with Codex v0.121.0
 
 ## [0.1.6] - 2026-04-08
 
