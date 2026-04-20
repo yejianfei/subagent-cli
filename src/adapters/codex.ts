@@ -62,7 +62,7 @@ export class CodexAdapter extends SubagentCliAdapter {
 
       if (screen.includes('Booting')) continue
 
-      if (screen.includes('% left')) {
+      if (screen.includes('% left') || screen.includes('· /')) {
         this.state = 'IDLE'
         return
       }
@@ -171,8 +171,8 @@ export class CodexAdapter extends SubagentCliAdapter {
         explain: '',
         exit: 'quit',
       },
-      match_words: ['% left', 'esc to', 'tab to queue'],
-      idle_words: ['% left'],
+      match_words: ['% left', 'esc to', 'tab to queue', '· /'],
+      idle_words: ['% left', '· /'],
       running_words: ['esc to interrupt', 'tab to queue'],
       asking_words: ['esc to cancel'],
       probe: ' ',
