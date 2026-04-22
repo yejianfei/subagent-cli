@@ -1,6 +1,6 @@
 {
   "name": "@yejianfei.billy/subagent-cli",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Delegate tasks to sub-agent CLI instances (Claude Code, Codex, etc.)",
   "author": "yejianfei.billy",
   "license": "Apache-2.0",
