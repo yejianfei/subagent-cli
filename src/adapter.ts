@@ -430,7 +430,24 @@ export abstract class SubagentCliAdapter extends EventEmitter {
       if (!this.terminal) return
       await this.terminal.flush()
       const screen = this.terminal.capture(this.terminal.totalLines)
-      const result = this.detect(screen)
+      let result = this.detect(screen)
+
+      // Probe cleanup: probe space causes "tab to queue" to persist after task ends.
+      // When RUNNING but only "tab to queue" remains (no "esc to interrupt"),
+      // clear probe → re-detect → IDLE means truly done, otherwise re-send probe.
+      const rules = this.getAdapterDetectRules()
+      if (result === 'RUNNING' && this.state === 'RUNNING' && rules.probe
+          && screen.includes('tab to queue') && !screen.includes('esc to interrupt')) {
+        this.terminal.write('\x15') // Ctrl+U: clear probe
+        await this.wait(300)
+        await this.terminal.flush()
+        result = this.detect(this.terminal.capture(this.terminal.totalLines))
+        if (result !== 'IDLE') {
+          this.terminal.write(rules.probe)
+          return
+        }
+      }
+
       switch (result) {
         case 'ASKING':
           this.onAsking()

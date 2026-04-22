@@ -42,14 +42,18 @@ export class CodexAdapter extends SubagentCliAdapter {
    *   4. Real IDLE (shows "% left", no "Booting") → done
    */
   protected async onInit(_timeoutMs: number): Promise<void> {
-    const { probe } = this.getAdapterDetectRules()
     const maxIterations = 60
     for (let i = 0; i < maxIterations; i++) {
       await this.wait(2000)
-      if (probe) this.terminal.write(probe)
-      await this.wait(300)
       await this.terminal.flush()
       const screen = this.terminal.capture(this.terminal.totalLines)
+
+      if ((screen.includes('% left') || screen.includes('· /'))
+          && !screen.includes('Booting')) {
+        this.terminal.write('\x15') // Ctrl+U: clear any probe residue
+        this.state = 'IDLE'
+        return
+      }
 
       if (screen.includes('Update available')) {
         this.terminal.write('\x1b[B')  // Down arrow → Skip
@@ -64,11 +68,6 @@ export class CodexAdapter extends SubagentCliAdapter {
       }
 
       if (screen.includes('Booting')) continue
-
-      if (screen.includes('% left') || screen.includes('· /')) {
-        this.state = 'IDLE'
-        return
-      }
     }
     throw new Error('READY_TIMEOUT')
   }
