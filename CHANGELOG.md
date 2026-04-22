@@ -1,11 +1,29 @@
 # Changelog
 
-## [0.1.9] - 2026-04-22
+## [0.1.10] - 2026-04-22
+
+### Added
+- `--force` / `-f` flag for approve/reject/allow — skip internal state check, send key regardless
+- `auto` command — toggle auto-approve mode for session
+- `allow` description: "Approve via option 2. Scope depends on target CLI"
 
 ### Fixed
-- Detection engine: probe cleanup — clear probe via Ctrl+U when only `tab to queue` remains, re-detect to confirm true IDLE before transitioning
+- Detection engine: probe verification prevents false IDLE during brief gaps between tool calls
+- Codex e2e: assertCheck auto-approves when stuck in ASKING; reject timeout increased
+
+## [0.1.9] - 2026-04-22
+
+### Added
+- `--force` / `-f` flag for approve/reject/allow — skip internal state check, send key regardless
+- `auto` command — toggle auto-approve mode, all subsequent approvals confirmed automatically
+- `allow` description clarified — "Approve via option 2", scope depends on target CLI
+
+### Fixed
+- Detection engine: probe verification — when IDLE detected while RUNNING, send probe+Ctrl+U to confirm truly idle before transitioning (prevents false IDLE during tool gaps)
+- Detection engine: probe cleanup — clear probe residue (`tab to queue`) via Ctrl+U and re-detect before IDLE transition
 - Codex adapter: restore probe mechanism with `tab to queue` in running_words, preventing false IDLE during streaming
 - Codex adapter: IDLE check before `Update available` in onInit — v0.121.0 update banner is non-interactive
+- Codex e2e: assertCheck auto-approves when ASKING while waiting for IDLE; reject timeout increased
 
 ## [0.1.8] - 2026-04-22
 

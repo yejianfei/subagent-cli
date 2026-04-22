@@ -68,16 +68,20 @@ export class SubagentClient {
     return this.request('POST', `/session/${session}/prompt`, { prompt, timeout })
   }
 
-  approve(session: string, prompt?: string, timeout?: number) {
-    return this.request('POST', `/session/${session}/approve`, { prompt, timeout })
+  approve(session: string, prompt?: string, timeout?: number, force?: boolean) {
+    return this.request('POST', `/session/${session}/approve`, { prompt, timeout, force })
   }
 
-  reject(session: string, prompt?: string, timeout?: number) {
-    return this.request('POST', `/session/${session}/reject`, { prompt, timeout })
+  reject(session: string, prompt?: string, timeout?: number, force?: boolean) {
+    return this.request('POST', `/session/${session}/reject`, { prompt, timeout, force })
   }
 
-  allow(session: string, timeout?: number) {
-    return this.request('POST', `/session/${session}/allow`, { timeout })
+  allow(session: string, timeout?: number, force?: boolean) {
+    return this.request('POST', `/session/${session}/allow`, { timeout, force })
+  }
+
+  auto(session: string, enabled = true) {
+    return this.request('POST', `/session/${session}/auto`, { enabled })
   }
 
   status(session: string) { return this.request('GET', `/session/${session}/status`) }

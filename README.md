@@ -11,7 +11,7 @@ Drive independent coding environments like Claude Code and Codex through headles
 | Cross-model           | ❌ Anthropic only               | ✅ Claude Code / Codex / Aider / Gemini  | ✅ Any terminal tool              | ✅ Claude Code / Codex                            |
 | AI-programmable       | ✅ Via tool calls               | ❌ Human-facing                          | ⚠️ Must parse screen yourself    | ✅ JSON in/out                                    |
 | Main agent token cost | Subagents share context window | N/A (human-driven)                      | High (each poll consumes tokens) | Low (only on send/receive)                       |
-| Approval control      | Limited by permission modes    | Manual interaction                      | Simulate keystrokes              | Full flow (approve / reject / amend / allow-all) |
+| Approval control      | Limited by permission modes    | Manual interaction                      | Simulate keystrokes              | Full flow (approve / reject / amend / allow)     |
 | Vendor lock-in        | Anthropic                      | None                                    | None                             | None                                             |
 
 ## What It Does
@@ -19,7 +19,7 @@ Drive independent coding environments like Claude Code and Codex through headles
 - Control Claude Code, Codex and other coding terminals from a single workflow — mix different AIs freely
 - Assign different models to different roles: decision-making, execution, review. Mutual oversight eliminates blind spots
 - Each sub-agent runs in its own PTY process with full environment isolation
-- Tool-use approval flow: approve, reject, amend, or allow-all — same as manual interaction
+- Tool-use approval flow: approve, reject, amend, or allow (option 2 — scope varies by CLI)
 - Persistent sessions — reconnect by ID with full context preserved
 - Built-in web debug terminal for real-time sub-agent screen inspection
 
@@ -105,7 +105,7 @@ subagent-cli approve --session a1b2c3d4
 # → { "success": true, "code": 200, "data": { "session": "a1b2c3d4", "status": "done", "output": "⏺ Write(server.js)\n  ⎿ Wrote 10 lines..." } }
 # → =====SUBAGENT_JSON=====
 
-# Or reject / amend / allow-all:
+# Or reject / amend / allow similar:
 subagent-cli reject --session a1b2c3d4 "Use Koa instead"
 subagent-cli approve --session a1b2c3d4 "Change port to 8080"
 subagent-cli allow --session a1b2c3d4
@@ -136,7 +136,7 @@ Parse by extracting content between the two `=====SUBAGENT_JSON=====` markers, t
 | `open`      | `-s, --subagent <name>` `--cwd <path>` `--session <id>` `--timeout <s>` | Create new session or resume existing one                        |
 | `prompt`    | `--session <id>` `--timeout <s>` `<text>`                               | Send task, blocks until done or approval needed                  |
 | `approve`   | `--session <id>` `--timeout <s>` `[text]`                               | Approve tool use (Enter). Optional text typed before approval    |
-| `allow`     | `--session <id>` `--timeout <s>`                                        | Approve and allow all similar operations (Shift+Tab)             |
+| `allow`     | `--session <id>` `--timeout <s>`                                        | Approve via option 2. Scope depends on target CLI                |
 | `reject`    | `--session <id>` `--timeout <s>` `[text]`                               | Reject tool use (Escape). Optional text sent as new instruction  |
 | `cancel`    | `--session <id>`                                                        | Cancel running task (Escape)                                     |
 | `status`    | `--session <id>`                                                        | Get internal session state (sync)                                |
@@ -290,7 +290,7 @@ Core workflow:
 2. `subagent-cli prompt --session <id> "task"`     - Send task, blocks until done or approval. Done returns `output` field with extracted reply
 3. `subagent-cli approve --session <id>`           - Approve tool use (Enter). Done returns `output`
    `subagent-cli reject --session <id> "reason"`   - Reject with new instruction (Escape)
-   `subagent-cli allow --session <id>`             - Allow all similar operations (Shift+Tab)
+   `subagent-cli allow --session <id>`             - Approve via option 2 (scope varies by CLI)
 4. `subagent-cli output --session <id> --type last` - Get last sub-agent reply (TUI chrome stripped)
 5. `subagent-cli close --session <id>`             - Close session (history kept)
 

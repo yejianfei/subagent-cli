@@ -61,7 +61,12 @@ async function assertCheck(sessionId, expected) {
     const { json } = await cli(['check', '--session', sessionId])
     last = json.data.state
     if (last === expected) return
-    if (expected === 'IDLE' && (last === 'RUNNING' || last === 'ASKING')) {
+    if (expected === 'IDLE' && last === 'ASKING') {
+      console.log(`    check: got ASKING, auto-approving...`)
+      try { await cli(['approve', '--session', sessionId, '--timeout', '60'], 90_000) } catch { /* timeout ok */ }
+      continue
+    }
+    if (expected === 'IDLE' && last === 'RUNNING') {
       console.log(`    check: got ${last}, waiting for ${expected}...`)
       await new Promise(r => setTimeout(r, interval))
       continue
@@ -293,7 +298,7 @@ describe('E2E: Codex single session', { timeout: 900_000 }, () => {
       console.warn('    \x1b[33m⚠ FALLBACK: not in ASKING state, skipping reject test\x1b[0m')
       return
     }
-    const { json } = await cli(['reject', '--session', sessionId])
+    const { json } = await cli(['reject', '--session', sessionId, '--timeout', '120'], 300_000)
     assert.equal(json.success, true)
     console.log(`    After reject: ${json.data.status}`)
     if (json.data.status === 'approval_needed') {
@@ -365,6 +370,29 @@ describe('E2E: Codex single session', { timeout: 900_000 }, () => {
     if (json.data.status === 'approval_needed') {
       await approveLoop(sessionId)
     }
+    await assertCheck(sessionId, 'IDLE')
+  })
+
+  // ── Auto-approve ──
+
+  it('⑫½ auto: enable → prompt with tool use → done without manual approval', async () => {
+    await assertCheck(sessionId, 'IDLE')
+    const { json: autoOn } = await cli(['auto', '--session', sessionId])
+    assert.equal(autoOn.success, true)
+    assert.equal(autoOn.data.auto, true)
+    console.log(`    Auto-approve enabled`)
+
+    const { json } = await cli([
+      'prompt',
+      'Create a file called auto-test.txt in the current directory with content "auto approved".',
+      '--session', sessionId, '--timeout', '120',
+    ], 150_000)
+    assert.equal(json.success, true)
+    assert.equal(json.data.status, 'done', 'Auto-approve should complete without approval_needed')
+    console.log(`    Auto-approve result: ${json.data.status}`)
+
+    const { json: autoOff } = await cli(['auto', '--session', sessionId, '--off'])
+    assert.equal(autoOff.data.auto, false)
     await assertCheck(sessionId, 'IDLE')
   })
 

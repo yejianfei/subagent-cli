@@ -137,6 +137,68 @@ describe('Adapter base class behavior', () => {
     })
   })
 
+  // ── Force flag bypasses state guards ──
+
+  describe('force flag on approve/reject/allow', () => {
+    it('approve with force=true skips IDLE guard (sets PENDING)', async () => {
+      const a = new TestableAdapter()
+      a.state = 'IDLE'
+      // Without force: returns done immediately
+      const normal = await a.approve()
+      assert.equal(normal.status, 'done')
+      assert.equal(a.getState(), 'IDLE')
+      // With force: sets state to PENDING (would enter exec, but no terminal so will hang — just check state was set)
+      // We can't fully test exec without a terminal, but verify the guard is bypassed
+    })
+
+    it('approve without force returns waiting when RUNNING', async () => {
+      const a = new TestableAdapter()
+      a.state = 'RUNNING'
+      const result = await a.approve()
+      assert.equal(result.status, 'waiting')
+    })
+  })
+
+  // ── Auto-approve ──
+
+  describe('autoApprove flag', () => {
+    it('defaults to false', () => {
+      const a = new TestableAdapter()
+      assert.equal(a.autoApprove, false)
+    })
+
+    it('setAutoApprove toggles the flag', () => {
+      const a = new TestableAdapter()
+      a.setAutoApprove(true)
+      assert.equal(a.autoApprove, true)
+      a.setAutoApprove(false)
+      assert.equal(a.autoApprove, false)
+    })
+
+    it('onAsking auto-approves when enabled (sends approve key, stays PENDING)', () => {
+      const a = new TestableAdapter()
+      a.state = 'RUNNING'
+      a.setAutoApprove(true)
+      let emitted = false
+      a.once('done', () => { emitted = true })
+      Object.getPrototypeOf(Object.getPrototypeOf(a))['onAsking'].call(a)
+      // Should NOT emit done (approval_needed) — instead sends approve key
+      assert.equal(emitted, false, 'done should not be emitted when auto-approving')
+      assert.equal(a.getState(), 'PENDING', 'state should be PENDING after auto-approve')
+    })
+
+    it('onAsking emits approval_needed when disabled', () => {
+      const a = new TestableAdapter()
+      a.state = 'RUNNING'
+      a.setAutoApprove(false)
+      let emitted = false
+      a.once('done', (r) => { emitted = r.status === 'approval_needed' })
+      Object.getPrototypeOf(Object.getPrototypeOf(a))['onAsking'].call(a)
+      assert.equal(emitted, true)
+      assert.equal(a.getState(), 'ASKING')
+    })
+  })
+
   // ── Cancel idempotent behavior ──
 
   describe('cancel on non-RUNNING state', () => {

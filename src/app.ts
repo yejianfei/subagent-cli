@@ -245,25 +245,33 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
   // POST /api/session/:id/approve
   router.post('/session/:id/approve', async (ctx) => {
     const adapter = getAdapter(ctx); if (!adapter) return
-    const { prompt, timeout } = (ctx.request.body ?? {}) as { prompt?: string; timeout?: number }
-    const result = await adapter.approve(prompt, timeout ?? 0)
+    const { prompt, timeout, force } = (ctx.request.body ?? {}) as { prompt?: string; timeout?: number; force?: boolean }
+    const result = await adapter.approve(prompt, timeout ?? 0, force)
     ok(ctx, { session: ctx.params.id, ...result })
   })
 
   // POST /api/session/:id/reject
   router.post('/session/:id/reject', async (ctx) => {
     const adapter = getAdapter(ctx); if (!adapter) return
-    const { prompt, timeout } = (ctx.request.body ?? {}) as { prompt?: string; timeout?: number }
-    const result = await adapter.reject(prompt, timeout ?? 0)
+    const { prompt, timeout, force } = (ctx.request.body ?? {}) as { prompt?: string; timeout?: number; force?: boolean }
+    const result = await adapter.reject(prompt, timeout ?? 0, force)
     ok(ctx, { session: ctx.params.id, ...result })
   })
 
   // POST /api/session/:id/allow
   router.post('/session/:id/allow', async (ctx) => {
     const adapter = getAdapter(ctx); if (!adapter) return
-    const { timeout } = (ctx.request.body ?? {}) as { timeout?: number }
-    const result = await adapter.allow(timeout ?? 0)
+    const { timeout, force } = (ctx.request.body ?? {}) as { timeout?: number; force?: boolean }
+    const result = await adapter.allow(timeout ?? 0, force)
     ok(ctx, { session: ctx.params.id, ...result })
+  })
+
+  // POST /api/session/:id/auto
+  router.post('/session/:id/auto', (ctx) => {
+    const adapter = getAdapter(ctx); if (!adapter) return
+    const { enabled } = (ctx.request.body ?? {}) as { enabled?: boolean }
+    adapter.setAutoApprove(enabled !== false)
+    ok(ctx, { session: ctx.params.id, auto: adapter.autoApprove })
   })
 
   // POST /api/session/:id/cancel

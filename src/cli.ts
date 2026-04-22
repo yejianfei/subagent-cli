@@ -22,7 +22,7 @@ Workflow:
   4. subagent-cli approve --session <id>         # approve tool use, done returns output
      subagent-cli approve --session <id> "text"  # type selection/message, then approve
      subagent-cli reject --session <id> "reason" # reject with instruction (Escape + text)
-     subagent-cli allow --session <id>           # allow all for this session (Shift+Tab)
+     subagent-cli allow --session <id>           # approve + don't ask again for similar ops
   5. subagent-cli output --session <id> --type last  # get last reply (TUI chrome stripped)
   6. subagent-cli close --session <id>           # stop session (history kept)
 
@@ -101,11 +101,12 @@ program
 
 program
   .command('approve [text]')
-  .description('Approve pending tool use (Enter). Done includes extracted output. Optional [text] for amend (claude-code only)')
+  .description('Approve pending tool use (Enter). Optional [text] for amend (claude-code only)')
   .requiredOption('--session <id>', 'Session ID')
   .option('--timeout <seconds>', 'Task timeout in seconds (0 = no timeout)', '0')
+  .option('-f, --force', 'Skip state check, send key regardless of internal state')
   .action(async (text, opts) => {
-    await output(await client().approve(opts.session, text, Number(opts.timeout)))
+    await output(await client().approve(opts.session, text, Number(opts.timeout), opts.force))
   })
 
 program
@@ -113,17 +114,28 @@ program
   .description('Reject pending tool use (Escape), or type a reason/instruction first')
   .requiredOption('--session <id>', 'Session ID')
   .option('--timeout <seconds>', 'Task timeout in seconds (0 = no timeout)', '0')
+  .option('-f, --force', 'Skip state check, send key regardless of internal state')
   .action(async (text, opts) => {
-    await output(await client().reject(opts.session, text, Number(opts.timeout)))
+    await output(await client().reject(opts.session, text, Number(opts.timeout), opts.force))
   })
 
 program
   .command('allow')
-  .description('Allow all tool use for this session (shift+tab)')
+  .description('Approve via option 2. Scope depends on target CLI')
   .requiredOption('--session <id>', 'Session ID')
   .option('--timeout <seconds>', 'Task timeout in seconds (0 = no timeout)', '0')
+  .option('-f, --force', 'Skip state check, send key regardless of internal state')
   .action(async (opts) => {
-    await output(await client().allow(opts.session, Number(opts.timeout)))
+    await output(await client().allow(opts.session, Number(opts.timeout), opts.force))
+  })
+
+program
+  .command('auto')
+  .description('Toggle auto-approve: all subsequent approvals confirmed automatically')
+  .requiredOption('--session <id>', 'Session ID')
+  .option('--off', 'Disable auto-approve')
+  .action(async (opts) => {
+    await output(await client().auto(opts.session, !opts.off))
   })
 
 program

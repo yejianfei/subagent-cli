@@ -102,6 +102,8 @@ function createMockAdapter() {
       created_at: new Date().toISOString(),
     }),
     close: () => { state = 'CLOSED' },
+    autoApprove: false,
+    setAutoApprove(v) { adapter.autoApprove = v },
     // Allow test to force state transitions
     _setState: (s) => { state = s },
   })
@@ -292,6 +294,23 @@ describe('App HTTP API', () => {
         .expect(200)
       assert.equal(res.body.success, true)
       assert.equal(res.body.data.status, 'done')
+    })
+
+    it('should toggle auto-approve', async () => {
+      const res = await agent
+        .post(`/api/session/${sessionId}/auto`)
+        .send({ enabled: true })
+        .set('Content-Type', 'application/json')
+        .expect(200)
+      assert.equal(res.body.success, true)
+      assert.equal(res.body.data.auto, true)
+
+      const off = await agent
+        .post(`/api/session/${sessionId}/auto`)
+        .send({ enabled: false })
+        .set('Content-Type', 'application/json')
+        .expect(200)
+      assert.equal(off.body.data.auto, false)
     })
 
     it('should close session', async () => {

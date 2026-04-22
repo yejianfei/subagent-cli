@@ -45,6 +45,7 @@ export abstract class SubagentCliAdapter extends EventEmitter {
   protected params!: Readonly<OpenParams>
   protected createdAt = new Date()
   private detectTimer: ReturnType<typeof setInterval> | null = null
+  private autoApproveEnabled = false
 
   abstract readonly name: string
 
@@ -217,10 +218,12 @@ export abstract class SubagentCliAdapter extends EventEmitter {
     return r
   }
 
-  async approve(prompt?: string, timeout = 0): Promise<PromptResult> {
-    if (this.state === 'IDLE') return { status: 'done' }
-    if (this.state === 'RUNNING') return { status: 'waiting' }
-    if (this.state !== 'ASKING') return { status: 'waiting' }
+  async approve(prompt?: string, timeout = 0, force = false): Promise<PromptResult> {
+    if (!force) {
+      if (this.state === 'IDLE') return { status: 'done' }
+      if (this.state === 'RUNNING') return { status: 'waiting' }
+      if (this.state !== 'ASKING') return { status: 'waiting' }
+    }
     const rules = this.getAdapterDetectRules()
     this.history.log('approve', prompt ?? '(no prompt)')
     this.state = 'PENDING'
@@ -252,10 +255,12 @@ export abstract class SubagentCliAdapter extends EventEmitter {
     return r
   }
 
-  async allow(timeout = 0): Promise<PromptResult> {
-    if (this.state === 'IDLE') return { status: 'done' }
-    if (this.state === 'RUNNING') return { status: 'waiting' }
-    if (this.state !== 'ASKING') return { status: 'waiting' }
+  async allow(timeout = 0, force = false): Promise<PromptResult> {
+    if (!force) {
+      if (this.state === 'IDLE') return { status: 'done' }
+      if (this.state === 'RUNNING') return { status: 'waiting' }
+      if (this.state !== 'ASKING') return { status: 'waiting' }
+    }
     const rules = this.getAdapterDetectRules()
     this.history.log('allow', 'allow all during session')
     this.state = 'PENDING'
@@ -283,10 +288,12 @@ export abstract class SubagentCliAdapter extends EventEmitter {
     return r
   }
 
-  async reject(prompt?: string, timeout = 0): Promise<PromptResult> {
-    if (this.state === 'IDLE') return { status: 'done' }
-    if (this.state === 'RUNNING') return { status: 'waiting' }
-    if (this.state !== 'ASKING') return { status: 'waiting' }
+  async reject(prompt?: string, timeout = 0, force = false): Promise<PromptResult> {
+    if (!force) {
+      if (this.state === 'IDLE') return { status: 'done' }
+      if (this.state === 'RUNNING') return { status: 'waiting' }
+      if (this.state !== 'ASKING') return { status: 'waiting' }
+    }
     const rules = this.getAdapterDetectRules()
     this.history.log('reject', prompt ?? '(no reason)')
     this.state = 'PENDING'
@@ -332,6 +339,13 @@ export abstract class SubagentCliAdapter extends EventEmitter {
     this.history.log(r.status, 'cancelled')
     return r
   }
+
+  setAutoApprove(enabled: boolean): void {
+    this.autoApproveEnabled = enabled
+    this.history?.log('auto', enabled ? 'enabled' : 'disabled')
+  }
+
+  get autoApprove(): boolean { return this.autoApproveEnabled }
 
   status(): SessionStatus {
     return {
@@ -432,19 +446,24 @@ export abstract class SubagentCliAdapter extends EventEmitter {
       const screen = this.terminal.capture(this.terminal.totalLines)
       let result = this.detect(screen)
 
-      // Probe cleanup: probe space causes "tab to queue" to persist after task ends.
-      // When RUNNING but only "tab to queue" remains (no "esc to interrupt"),
-      // clear probe → re-detect → IDLE means truly done, otherwise re-send probe.
+      // Probe verification: when IDLE detected while RUNNING and probe is configured,
+      // verify by sending probe+Ctrl+U to confirm truly idle (not a brief gap between tools).
+      // Also handles probe residue: "tab to queue" persisting after task ends.
       const rules = this.getAdapterDetectRules()
-      if (result === 'RUNNING' && this.state === 'RUNNING' && rules.probe
-          && screen.includes('tab to queue') && !screen.includes('esc to interrupt')) {
-        this.terminal.write('\x15') // Ctrl+U: clear probe
-        await this.wait(300)
-        await this.terminal.flush()
-        result = this.detect(this.terminal.capture(this.terminal.totalLines))
-        if (result !== 'IDLE') {
+      if (this.state === 'RUNNING' && rules.probe) {
+        const needsVerify = (result === 'IDLE' && !screen.includes('esc to interrupt'))
+          || (result === 'RUNNING' && screen.includes('tab to queue') && !screen.includes('esc to interrupt'))
+        if (needsVerify) {
           this.terminal.write(rules.probe)
-          return
+          await this.wait(200)
+          this.terminal.write('\x15') // Ctrl+U: clear probe
+          await this.wait(300)
+          await this.terminal.flush()
+          result = this.detect(this.terminal.capture(this.terminal.totalLines))
+          if (result !== 'IDLE') {
+            this.terminal.write(rules.probe)
+            return
+          }
         }
       }
 
@@ -495,9 +514,14 @@ export abstract class SubagentCliAdapter extends EventEmitter {
         break
       case 'PENDING':
       case 'RUNNING':
-        this.state = 'ASKING'
-        // Emit synchronously — no async gap. Approval details extracted lazily by caller.
-        this.emit('done', { status: 'approval_needed' } as PromptResult)
+        if (this.autoApproveEnabled) {
+          this.state = 'PENDING'
+          this.terminal?.write(rules.input_keys.approve)
+          this.history?.log('auto-approve', 'auto')
+        } else {
+          this.state = 'ASKING'
+          this.emit('done', { status: 'approval_needed' } as PromptResult)
+        }
         break
     }
   }
