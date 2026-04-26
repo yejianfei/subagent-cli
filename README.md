@@ -1,156 +1,191 @@
 # subagent-cli
 
-Drive independent coding environments like Claude Code and Codex through headless terminals. Control multiple terminal sessions via a unified CLI, enabling cross-terminal, cross-model collaboration with different AI vendors.
-
-## Why subagent-cli
-
-| <br />                | Claude Code Built-in Subagents | Claude Squad                            | tmux                             | subagent-cli                                     |
-| --------------------- | ------------------------------ | --------------------------------------- | -------------------------------- | ------------------------------------------------ |
-| How                   | Internal subprocess spawning   | tmux sessions + git worktree            | Main agent drives tmux directly  | Headless PTY + CLI state machine                 |
-| For                   | Official built-in feature      | TUI for humans managing multiple agents | AI self-driving tmux             | CLI for AI-to-AI delegation                      |
-| Cross-model           | ❌ Anthropic only               | ✅ Claude Code / Codex / Aider / Gemini  | ✅ Any terminal tool              | ✅ Claude Code / Codex                            |
-| AI-programmable       | ✅ Via tool calls               | ❌ Human-facing                          | ⚠️ Must parse screen yourself    | ✅ JSON in/out                                    |
-| Main agent token cost | Subagents share context window | N/A (human-driven)                      | High (each poll consumes tokens) | Low (only on send/receive)                       |
-| Approval control      | Limited by permission modes    | Manual interaction                      | Simulate keystrokes              | Full flow (approve / reject / amend / allow)     |
-| Vendor lock-in        | Anthropic                      | None                                    | None                             | None                                             |
-
-## What It Does
-
-- Control Claude Code, Codex and other coding terminals from a single workflow — mix different AIs freely
-- Assign different models to different roles: decision-making, execution, review. Mutual oversight eliminates blind spots
-- Each sub-agent runs in its own PTY process with full environment isolation
-- Tool-use approval flow: approve, reject, amend, or allow (option 2 — scope varies by CLI)
-- Persistent sessions — reconnect by ID with full context preserved
-- Built-in web debug terminal for real-time sub-agent screen inspection
-
-## Not Recommended
-
-- Fine-grained tasks — session startup and each interaction have overhead, best suited for self-contained subtasks of meaningful scope
-- Use as a general-purpose terminal multiplexer or CI/CD tool
-- Expecting precise structured output — built on screen parsing, inherently fuzzy
-- Running as a long-lived service in production — this is a development-stage debugging and collaboration tool
-
-## Architecture
-
-```
-Main Agent (Claude Code / Codex / ...)
-    │
-    │  stdout JSON
-    ▼
-┌──────────────────────┐          ┌──────────────────────────┐
-│  subagent-cli (CLI)  │          │  Browser Debug Viewer    │
-│  HTTP fetch          │          │  xterm.js (WebSocket)    │
-└──────────┬───────────┘          └─────────────┬────────────┘
-           │ HTTP JSON                          │ WebSocket
-           ▼                                    ▼
-┌────────────────────────────────────────────────────────────┐
-│  App Daemon (Koa2, localhost:7100)                         │
-│                                                            │
-│  ┌─ Session ──────────────────────────────────────────┐    │
-│  │  ClaudeCodeAdapter (state machine)                 │    │
-│  │  ├── PtyXterm (node-pty + xterm/headless)          │    │
-│  │  └── SessionHistory                                │    │
-│  └────────────────────────────────────────────────────┘    │
-│                                                            │
-│  ┌─ Session ──────────────────────────────────────────┐    │
-│  │  ... more sessions                                 │    │
-│  └────────────────────────────────────────────────────┘    │
-└────────────────────────────────────────────────────────────┘
-```
-
-- **CLI** — Short-lived process. Receives commands from the main agent, forwards to App via HTTP, returns JSON to stdout.
-- **App** — Long-running daemon on `localhost:7100`. Manages all sessions, monitors idle timeouts, auto-exits when unused.
-- **Session** — In-memory composite object: Adapter (state machine) + PtyXterm (virtual terminal) + SessionHistory.
-
-The CLI auto-detects the App daemon via TCP probe. If not running, it forks one automatically.
-
-## Supported Terminals
-
-| Adapter       | Status      | CLI Tool                                            |
-| ------------- | ----------- | --------------------------------------------------- |
-| `claude-code` | ✅ Available | [Claude Code](https://claude.ai/code)               |
-| `codex`       | ✅ Available | [OpenAI Codex CLI](https://github.com/openai/codex) |
+Let your AI agent drive other AI agents. Control Claude Code, Codex and other coding terminals through a unified CLI — assign tasks, review approvals, collect results.
 
 ## Quick Start
 
 ```bash
-# Install from npm
 npm install -g @yejianfei.billy/subagent-cli
+```
 
-# Or clone and build from source
-git clone https://github.com/yejianfei/subagent-cli.git
-cd subagent-cli
-npm install
-npm run build
-npm link
-
-# 1. List available subagents
-subagent-cli subagents
-
-# 2. Open a session (App starts automatically if not running)
+```bash
+# 1. Start a session
 subagent-cli open -s haiku --cwd /path/to/project
-# → =====SUBAGENT_JSON=====
-# → { "success": true, "code": 200, "data": { "session": "a1b2c3d4" } }
-# → =====SUBAGENT_JSON=====
+# → { "session": "a1b2c3d4" }
 
-# 3. Send a task
+# 2. Always check state before sending commands
+subagent-cli check --session a1b2c3d4
+# → { "status": "IDLE" }
+
+# 3. Send a task (blocks until done or approval needed)
 subagent-cli prompt --session a1b2c3d4 "Create a hello world Express server"
-# → =====SUBAGENT_JSON=====
-# → { "success": true, "code": 200, "data": { "session": "a1b2c3d4", "status": "approval_needed", "approval": { "tool": "Write", "target": "server.js" } } }
-# → =====SUBAGENT_JSON=====
+# → { "status": "approval_needed", "approval": { "tool": "Write", "target": "server.js" } }
 
-# 4. Approve tool use
+# 4. Approve / reject / allow
 subagent-cli approve --session a1b2c3d4
-# → =====SUBAGENT_JSON=====
-# → { "success": true, "code": 200, "data": { "session": "a1b2c3d4", "status": "done", "output": "⏺ Write(server.js)\n  ⎿ Wrote 10 lines..." } }
-# → =====SUBAGENT_JSON=====
+# → { "status": "done", "output": "Created server.js with Express hello world..." }
 
-# Or reject / amend / allow similar:
-subagent-cli reject --session a1b2c3d4 "Use Koa instead"
-subagent-cli approve --session a1b2c3d4 "Change port to 8080"
-subagent-cli allow --session a1b2c3d4
-
-# 5. Close session (history preserved, can resume later)
+# 5. Close when done
 subagent-cli close --session a1b2c3d4
-
-# Resume a previous session
-subagent-cli open --session a1b2c3d4
 ```
 
-All commands output JSON wrapped in delimiters for reliable parsing:
+All commands output JSON wrapped in `=====SUBAGENT_JSON=====` delimiters for reliable extraction from mixed stdout.
+
+> **Tip**: Always run `check` before `prompt`/`approve`/`reject`/`allow`. Internal state may drift from actual terminal state. Use `--force` (`-f`) to send keys regardless of state.
+
+## Use Cases
+
+**Coding delegation** — Your main agent (e.g. Opus) breaks down a feature into subtasks, delegates each to a cheaper/faster sub-agent (Haiku, Kimi, Codex), reviews the results, and iterates. Each sub-agent runs in a fully isolated PTY with its own environment, tools, and MCP servers.
+
+**Independent review** — Send code to a different model family for review. A Claude agent delegates review to Codex, or vice versa. Cross-vendor oversight catches blind spots that same-family models share.
 
 ```
-=====SUBAGENT_JSON=====
-{ "success": bool, "code": number, "data": { ... } }
-=====SUBAGENT_JSON=====
+Main Agent (Opus)
+    ├── delegate coding ──→ Sub-agent A (Haiku / Kimi)
+    ├── delegate review ──→ Sub-agent B (Codex)
+    └── collect & verify results
 ```
 
-Parse by extracting content between the two `=====SUBAGENT_JSON=====` markers, then `JSON.parse` the result.
+## Integrate with Your AI Agent
+
+Add any of the following sections to your `CLAUDE.md`, `AGENTS.md`, or equivalent instructions file.
+
+### Basic — Core Workflow
+
+```markdown
+---
+name: subagent-delegation
+description: Delegate subtasks to independent coding agents via subagent-cli
+---
+
+Use `subagent-cli` to delegate subtasks to independent coding agents.
+Run `subagent-cli --help` for all commands.
+
+## Workflow
+
+1. `subagent-cli subagents`                        - List available sub-agents
+2. `subagent-cli sessions --cwd .`                 - Check for existing sessions to reuse
+3. `subagent-cli open -s haiku --cwd .`            - Start new session (or `open --session <id>` to resume)
+4. `subagent-cli check --session <id>`             - Verify state before every command
+5. `subagent-cli prompt --session <id> "task"`     - Send task (blocks until done or approval)
+6. Handle approvals:
+   - `approve --session <id>`                      - Approve tool use
+   - `reject --session <id> "reason"`              - Reject with new instruction
+   - `allow --session <id>`                        - Approve via option 2
+7. `subagent-cli close --session <id>`             - Close when done
+
+## Wait for State
+
+- `check --session <id> --wait IDLE`               - Poll until IDLE
+- `check --session <id> --wait IDLE --output last`  - Poll + return extracted reply
+- `check --session <id> --wait IDLE --timeout 30`   - Poll with timeout
+
+## Session Management
+
+- `sessions --status CLOSED`                       - List closed sessions
+- `delete --session <id>`                          - Delete one session
+- `delete --closed`                                - Delete all closed sessions
+- `delete --all`                                   - Close active + delete all
+
+## Rules
+
+- Always `check` (or `check --wait`) before sending commands — internal state may drift from terminal.
+- Use `--force` to send keys regardless of internal state.
+- Reuse sessions for follow-up tasks. Only create new sessions for unrelated work.
+- If a command times out, use `check` + `output` to inspect state before deciding next action.
+```
+
+### Coding Delegation
+
+```markdown
+---
+name: subagent-coding-delegation
+description: Delegate coding tasks to sub-agents with task scoping, structured prompts, and approval control
+---
+
+Delegate coding tasks to sub-agents. Reuse sessions for iterations on the same task.
+
+## Before Delegating
+
+- Run `subagent-cli subagents` to confirm available sub-agents.
+- Run `subagent-cli sessions --cwd .` to check for reusable sessions.
+- Estimate task scope — if changes are under ~50 lines, consider doing it directly.
+
+## Task Prompt Structure
+
+Send self-contained task prompts. Include:
+- **Goal**: what to achieve
+- **Scope**: which files/directories to modify
+- **Constraints**: project rules, safety boundaries
+- **Verification**: commands to run after completion
+
+## Approval Strategy
+
+- Use `approve` to review each tool call individually.
+- Use `allow` when the task scope is clear and low-risk.
+- Use `auto --session <id>` to auto-approve all tool calls in the session.
+- Use `reject "instruction"` to redirect with new guidance.
+- For delete/overwrite/large refactors, always review individually — do not auto-approve.
+```
+
+### Independent Review
+
+```markdown
+---
+name: subagent-independent-review
+description: Delegate review tasks to a different model family for cross-vendor oversight
+---
+
+Delegate review tasks to a sub-agent running a different model family for cross-vendor oversight.
+
+## Workflow
+
+1. Open or reuse a session with a different adapter (e.g. `codex` for reviewing Claude Code output).
+2. Send a review prompt describing what to review and the review criteria.
+3. The sub-agent reviews independently and returns findings.
+4. Handle approvals as needed — reviewers may need file read access.
+5. Collect the review output and act on findings.
+6. For multi-round review, reuse the same session — send follow-up prompts after fixing issues.
+
+## Rules
+
+- The reviewer only reviews — it does not modify source files.
+- Reuse the same session for follow-up review rounds on the same document.
+- If the reviewer times out, use `check` + `output` to retrieve partial results.
+```
+
+## Supported Terminals
+
+| Adapter       | Status | CLI Tool                                            |
+| ------------- | ------ | --------------------------------------------------- |
+| `claude-code` | ✅      | [Claude Code](https://claude.ai/code)               |
+| `codex`       | ✅      | [OpenAI Codex CLI](https://github.com/openai/codex) |
 
 ## CLI Reference
 
-| Command     | Options                                                                 | Description                                                      |
-| ----------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| `subagents` | <br />                                                                  | List available subagent configurations                           |
-| `sessions`  | `--cwd <path>`                                                          | List active sessions, optionally filter by working directory     |
+| Command     | Options                                                                  | Description                                                      |
+| ----------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------- |
+| `subagents` |                                                                          | List available subagent configurations                           |
+| `sessions`  | `--cwd <path>` `--status <state>`                                        | List sessions (active + closed), filter by cwd or state          |
 | `open`      | `-s, --subagent <name>` `--cwd <path>` `--session <id>` `--timeout <s>` | Create new session or resume existing one                        |
-| `prompt`    | `--session <id>` `--timeout <s>` `<text>`                               | Send task, blocks until done or approval needed                  |
-| `approve`   | `--session <id>` `--timeout <s>` `[text]`                               | Approve tool use (Enter). Optional text typed before approval    |
-| `allow`     | `--session <id>` `--timeout <s>`                                        | Approve via option 2. Scope depends on target CLI                |
-| `reject`    | `--session <id>` `--timeout <s>` `[text]`                               | Reject tool use (Escape). Optional text sent as new instruction  |
-| `cancel`    | `--session <id>`                                                        | Cancel running task (Escape)                                     |
-| `status`    | `--session <id>`                                                        | Get internal session state (sync)                                |
-| `check`     | `--session <id>`                                                        | Get screen-calibrated state (authoritative, async)               |
-| `output`    | `--session <id>` `--type <screen\|history\|last>`                      | Get terminal output (`last` = extracted sub-agent reply)         |
-| `close`     | `--session <id>`                                                        | Close session (omit `--session` to close all). History preserved |
-| `delete`    | `--session <id>`                                                        | Delete session permanently                                       |
-| `exit`      | `--session <id>`                                                        | Graceful exit (`/exit` command to Claude Code)                   |
+| `prompt`    | `--session <id>` `--timeout <s>` `<text>`                                | Send task, blocks until done or approval needed                  |
+| `approve`   | `--session <id>` `--timeout <s>` `-f` `[text]`                          | Approve tool use. Optional text typed before approval            |
+| `allow`     | `--session <id>` `--timeout <s>` `-f`                                    | Approve via option 2. Scope depends on target CLI                |
+| `reject`    | `--session <id>` `--timeout <s>` `-f` `[text]`                          | Reject tool use. Optional text sent as new instruction           |
+| `auto`      | `--session <id>` `--off`                                                 | Toggle auto-approve for the session                              |
+| `cancel`    | `--session <id>`                                                         | Cancel running task                                              |
+| `status`    | `--session <id>`                                                         | Get internal session state (sync)                                |
+| `check`     | `--session <id>` `--wait <state>` `--timeout <s>` `--output <type>`     | Get state. `--wait` polls until target state reached             |
+| `output`    | `--session <id>` `--type <screen\|history\|last>`                       | Get terminal output. `last` = extracted sub-agent reply          |
+| `close`     | `--session <id>`                                                         | Close session (omit `--session` to close all). History preserved |
+| `delete`    | `--session <id>` `--closed` `--all`                                      | Delete session, all closed, or everything                        |
+| `exit`      | `--session <id>`                                                         | Graceful exit the sub-agent process                              |
 
 Global option: `-c, --config <path>` — Custom config file path.
 
 ## Configuration
 
-Config file: `~/.subagent-cli/config.json` (auto-created on first run with default `haiku` and `codex` subagents)
+Config file: `~/.subagent-cli/config.json` (auto-created on first run)
 
 ```json
 {
@@ -184,10 +219,10 @@ Config file: `~/.subagent-cli/config.json` (auto-created on first run with defau
     },
     "codex": {
       "adapter": "codex",
-      "description": "OpenAI Codex CLI",
+      "description": "OpenAI Codex CLI (GPT-5.4)",
       "role": "You are a helpful assistant.",
       "command": "codex",
-      "args": ["--ask-for-approval", "untrusted"],
+      "args": ["--ask-for-approval", "untrusted", "-m", "gpt-5.4"],
       "env": {}
     }
   }
@@ -201,7 +236,7 @@ Config file: `~/.subagent-cli/config.json` (auto-created on first run with defau
 | `home` | `string` | `~/.subagent-cli` | Override home directory for sessions and data |
 | `port` | `number` | `7100`            | App daemon HTTP port                          |
 
-**`idle`** **— Idle monitoring**
+**`idle`** — Idle monitoring
 
 | Key                    | Type     | Default | Description                                                            |
 | ---------------------- | -------- | ------- | ---------------------------------------------------------------------- |
@@ -209,7 +244,7 @@ Config file: `~/.subagent-cli/config.json` (auto-created on first run with defau
 | `idle.check_interval`  | `number` | `30`    | How often to check for idle sessions (seconds)                         |
 | `idle.manager_timeout` | `number` | `120`   | App auto-exit delay when no sessions remain (seconds). `-1` to disable |
 
-**`terminal`** **— PTY terminal settings**
+**`terminal`** — PTY terminal settings
 
 | Key                   | Type     | Default | Description                                              |
 | --------------------- | -------- | ------- | -------------------------------------------------------- |
@@ -217,15 +252,13 @@ Config file: `~/.subagent-cli/config.json` (auto-created on first run with defau
 | `terminal.rows`       | `number` | `50`    | Terminal height in rows                                  |
 | `terminal.scrollback` | `number` | `5000`  | Scrollback buffer size (lines)                           |
 
-**`subagents.<name>`** **— Subagent definitions**
-
-Each key under `subagents` defines a named subagent that can be used with `open -s <name>`.
+**`subagents.<name>`** — Subagent definitions
 
 | Key           | Type       | Required | Description                                                           |
 | ------------- | ---------- | -------- | --------------------------------------------------------------------- |
-| `adapter`     | `string`   | Yes      | Adapter type. Supported: `claude-code`, `codex`                       |
+| `adapter`     | `string`   | Yes      | Adapter type: `claude-code` or `codex`                                |
 | `description` | `string`   | Yes      | Human-readable description, shown in `subagents` list                 |
-| `command`     | `string`   | Yes      | CLI command to spawn (e.g., `claude`)                                 |
+| `command`     | `string`   | Yes      | CLI command to spawn (e.g., `claude`, `codex`)                        |
 | `args`        | `string[]` | Yes      | Additional command-line arguments                                     |
 | `role`        | `string`   | No       | System prompt sent during session initialization to establish context |
 | `env`         | `object`   | Yes      | Environment variables passed to the spawned process                   |
@@ -239,20 +272,37 @@ Each key under `subagents` defines a named subagent that can be used with `open 
 
 **Model aliases**: `ANTHROPIC_MODEL` in env supports shorthand: `sonnet`, `opus`, `haiku`. Other env keys like `ANTHROPIC_DEFAULT_*_MODEL` require full model IDs.
 
+## Architecture
+
+```
+Main Agent (Claude Code / Codex / ...)
+    │  stdout JSON
+    ▼
+┌──────────────────────┐          ┌──────────────────────────┐
+│  subagent-cli (CLI)  │          │  Browser Debug Viewer    │
+│  thin HTTP client    │          │  xterm.js + WebSocket    │
+└──────────┬───────────┘          └─────────────┬────────────┘
+           │ HTTP                               │ WebSocket
+           ▼                                    ▼
+┌────────────────────────────────────────────────────────────┐
+│  App Daemon (localhost:7100)                               │
+│  ┌─ Session ─────────────────────────────────────────┐    │
+│  │  Adapter (state machine) + PtyXterm + History     │    │
+│  └───────────────────────────────────────────────────┘    │
+│  ┌─ Session ... ─────────────────────────────────────┐    │
+│  └───────────────────────────────────────────────────┘    │
+└────────────────────────────────────────────────────────────┘
+```
+
+- **CLI** — Short-lived process. Receives commands, forwards to App via HTTP, returns JSON.
+- **App** — Long-running daemon. Manages sessions, monitors idle timeouts, auto-exits when unused.
+- **Session** — Adapter (state machine) + PtyXterm (node-pty + xterm/headless) + SessionHistory.
+
+The CLI auto-detects the App daemon via TCP probe. If not running, it forks one automatically.
+
 ## Debug Viewer
 
-Access the built-in web terminal at `http://localhost:7100/viewer`.
-
-- **Session list**: `http://localhost:7100/viewer` — shows all active sessions
-- **Session terminal**: `http://localhost:7100/viewer?session=<id>` — real-time interactive terminal
-
-Features:
-
-- Full xterm.js rendering with dark theme
-- Keyboard input forwarding (you can type directly)
-- Dynamic resize with FitAddon
-- Screen snapshot replay on connect (no lost content on page reload)
-- Connection status indicator (green = connected, red = disconnected)
+Built-in web terminal at `http://localhost:7100/viewer` — real-time xterm.js rendering with keyboard input forwarding and connection status indicator.
 
 ## Development
 
@@ -263,51 +313,9 @@ npm run watch               # webpack watch mode
 npm test                    # unit tests (node:test)
 npm run test:e2e:claude     # Claude Code end-to-end tests
 npm run test:e2e:codex      # Codex end-to-end tests
-npm run test:all            # build + unit tests + e2e (full pipeline)
-
-# Manual daemon start (for debugging)
-SUBAGENT_DAEMON=1 node dist/app.js
 ```
 
-**Requirements**: Node.js 18+ (uses built-in `fetch`). Windows is not yet supported (macOS and Linux only).
-
-**Tested on**: macOS 15.7 (ARM64), Node.js v18.20, Claude Code 2.1.84, Codex CLI 0.118.0. Linux has not been e2e tested yet.
-
-**Native module note**: `node-pty` requires platform-specific prebuilds. The `postinstall` script automatically runs `chmod +x` on all `spawn-helper` binaries. If you encounter permission issues, run `chmod +x node_modules/node-pty/prebuilds/*/spawn-helper` manually.
-
-## AGENTS.md / CLAUDE.md
-
-For more consistent results when using subagent-cli from an AI agent, add to your project or global instructions file:
-
-```markdown
-## Subagent Delegation
-
-Use `subagent-cli` for delegating subtasks. Run `subagent-cli --help` for all commands.
-
-Core workflow:
-
-1. `subagent-cli open -s haiku --cwd .`            - Start session, returns session ID
-2. `subagent-cli prompt --session <id> "task"`     - Send task, blocks until done or approval. Done returns `output` field with extracted reply
-3. `subagent-cli approve --session <id>`           - Approve tool use (Enter). Done returns `output`
-   `subagent-cli reject --session <id> "reason"`   - Reject with new instruction (Escape)
-   `subagent-cli allow --session <id>`             - Approve via option 2 (scope varies by CLI)
-4. `subagent-cli output --session <id> --type last` - Get last sub-agent reply (TUI chrome stripped)
-5. `subagent-cli close --session <id>`             - Close session (history kept)
-
-Session recovery:
-  `subagent-cli sessions --cwd .`                  - Find sessions by working directory
-  `subagent-cli open --session <id>`               - Reconnect to existing session
-
-All commands output JSON wrapped in delimiters:
-  =====SUBAGENT_JSON=====
-  { "success": bool, "code": number, "data": { ... } }
-  =====SUBAGENT_JSON=====
-Parse by extracting content between the two delimiter lines, then JSON.parse.
-
-Debug viewer: http://localhost:7100/viewer?session=<id>
-
-Note: In `allow` mode, `check` may briefly return RUNNING for a few seconds after task completion due to status bar refresh delay. This only affects `check`; `prompt`/`approve`/`allow`/`reject` return immediately. Retry if needed.
-```
+**Requirements**: Node.js 18+ (uses built-in `fetch`). macOS and Linux only — Windows is not supported.
 
 ## Note
 

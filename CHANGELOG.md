@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.1.11] - 2026-04-26
+
+### Added
+- `check --wait <state>` — poll until session reaches target state, with optional `--timeout` and `--output <type>`
+- `sessions --status <state>` — filter sessions by state (IDLE, RUNNING, ASKING, CLOSED)
+- `sessions` now includes closed (disk-only) sessions with adapter, cwd, and created_at
+- `delete --closed` — batch delete all closed sessions
+- `delete --all` — close active sessions and delete all
+- Debug viewer shows all sessions including CLOSED; active session links open in new tab
+- Role prompt `[subagent-cli]` prefix — sessions created by subagent-cli are identifiable in `claude -r` and `codex resume` lists
+- Codex default config uses `gpt-5.4` model
+- npm keywords for search discoverability
+
+### Changed
+- README rewritten: user-facing Quick Start, Use Cases, Integrate with Your AI Agent (3 skill templates)
+- Removed all Gemini CLI references (not supported, no SDK planned)
+- CLI help text updated with `check --wait` and `delete --closed/--all` examples
+
 ## [0.1.10] - 2026-04-22
 
 ### Added

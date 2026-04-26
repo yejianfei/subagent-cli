@@ -475,6 +475,137 @@ describe('App HTTP API', () => {
     })
   })
 
+  // ── GET /api/session/:id/check — wait mode ──
+
+  describe('GET /api/session/:id/check — wait mode', () => {
+    let sessionId
+
+    before(async () => {
+      const res = await agent
+        .post('/api/open')
+        .send({ subagent: 'test-agent', cwd: VALID_CWD })
+        .set('Content-Type', 'application/json')
+      sessionId = res.body.data.session
+    })
+
+    after(async () => {
+      await agent.post(`/api/session/${sessionId}/close`)
+    })
+
+    it('should return immediately without --wait', async () => {
+      const res = await agent.get(`/api/session/${sessionId}/check`).expect(200)
+      assert.equal(res.body.success, true)
+      assert.ok(res.body.data.state)
+      assert.equal(res.body.data.output, undefined)
+    })
+
+    it('should return with output when --output specified', async () => {
+      const res = await agent.get(`/api/session/${sessionId}/check?output=screen`).expect(200)
+      assert.equal(res.body.success, true)
+      assert.equal(typeof res.body.data.output, 'string')
+    })
+
+    it('should wait and return when state matches', async () => {
+      const adp = ctx.sessions.get(sessionId)
+      adp._setState('IDLE')
+      const res = await agent.get(`/api/session/${sessionId}/check?wait=IDLE&timeout=5`).expect(200)
+      assert.equal(res.body.data.state, 'IDLE')
+    })
+
+    it('should timeout when state does not match', async () => {
+      const adp = ctx.sessions.get(sessionId)
+      adp._setState('RUNNING')
+      const res = await agent.get(`/api/session/${sessionId}/check?wait=IDLE&timeout=2`).expect(408)
+      assert.equal(res.body.data.error, 'TIMEOUT')
+    })
+
+    it('should return output when wait succeeds with --output', async () => {
+      const adp = ctx.sessions.get(sessionId)
+      adp._setState('IDLE')
+      const res = await agent.get(`/api/session/${sessionId}/check?wait=IDLE&timeout=5&output=screen`).expect(200)
+      assert.equal(res.body.data.state, 'IDLE')
+      assert.equal(typeof res.body.data.output, 'string')
+    })
+  })
+
+  // ── GET /api/sessions — status filter ──
+
+  describe('GET /api/sessions — status filter', () => {
+    let sessionId
+
+    before(async () => {
+      const res = await agent
+        .post('/api/open')
+        .send({ subagent: 'test-agent', cwd: VALID_CWD })
+        .set('Content-Type', 'application/json')
+      sessionId = res.body.data.session
+    })
+
+    after(async () => {
+      await agent.post(`/api/session/${sessionId}/close`)
+    })
+
+    it('should filter by status=IDLE', async () => {
+      const adp = ctx.sessions.get(sessionId)
+      adp._setState('IDLE')
+      const res = await agent.get('/api/sessions?status=IDLE').expect(200)
+      assert.ok(res.body.data.sessions.some(s => s.session === sessionId))
+    })
+
+    it('should exclude non-matching status', async () => {
+      const adp = ctx.sessions.get(sessionId)
+      adp._setState('IDLE')
+      const res = await agent.get('/api/sessions?status=RUNNING').expect(200)
+      assert.ok(!res.body.data.sessions.some(s => s.session === sessionId))
+    })
+
+    it('should filter CLOSED sessions from disk', async () => {
+      const res = await agent.get('/api/sessions?status=CLOSED').expect(200)
+      res.body.data.sessions.forEach(s => assert.equal(s.state, 'CLOSED'))
+    })
+  })
+
+  // ── DELETE /api/sessions/closed — batch delete ──
+
+  describe('DELETE /api/sessions/closed — batch delete', () => {
+    before(async () => {
+      // Create and close a session to leave disk residue
+      const res = await agent
+        .post('/api/open')
+        .send({ subagent: 'test-agent', cwd: VALID_CWD })
+        .set('Content-Type', 'application/json')
+      await agent.post(`/api/session/${res.body.data.session}/close`)
+    })
+
+    it('should delete all closed sessions', async () => {
+      const before = await agent.get('/api/sessions?status=CLOSED').expect(200)
+      const closedCount = before.body.data.sessions.length
+      assert.ok(closedCount > 0)
+
+      const res = await agent.delete('/api/sessions/closed').expect(200)
+      assert.ok(res.body.data.deleted.length > 0)
+
+      const after = await agent.get('/api/sessions?status=CLOSED').expect(200)
+      assert.equal(after.body.data.sessions.length, 0)
+    })
+  })
+
+  // ── DELETE /api/sessions/all — batch delete all ──
+
+  describe('DELETE /api/sessions/all — batch delete all', () => {
+    before(async () => {
+      await agent.post('/api/open').send({ subagent: 'test-agent', cwd: VALID_CWD }).set('Content-Type', 'application/json')
+    })
+
+    it('should close active and delete all sessions', async () => {
+      const res = await agent.delete('/api/sessions/all').expect(200)
+      assert.ok(res.body.data.deleted.length > 0)
+
+      const list = await agent.get('/api/sessions').expect(200)
+      assert.equal(list.body.data.sessions.length, 0)
+    })
+  })
+
   // ── Response format consistency ──
 
   describe('Response format', () => {

@@ -87,7 +87,7 @@ export class CodexAdapter extends SubagentCliAdapter {
 
     // Phase 2: send init prompt to create session
     const subCfg = cfg.subagents[params.subagent]
-    const initPrompt = subCfg?.role ?? 'hi'
+    const initPrompt = `[subagent-cli] ${subCfg?.role ?? 'hi'}`
     this.terminal.write(initPrompt, true)
     await this.wait(500)
     this.terminal.write('\r')

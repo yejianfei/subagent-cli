@@ -56,8 +56,12 @@ export class SubagentClient {
 
   getSubagents() { return this.request('GET', '/subagents') }
 
-  getSessions(cwd?: string) {
-    return this.request('GET', `/sessions${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''}`)
+  getSessions(cwd?: string, status?: string) {
+    const params = new URLSearchParams()
+    cwd && params.set('cwd', cwd)
+    status && params.set('status', status)
+    const qs = params.toString()
+    return this.request('GET', `/sessions${qs ? `?${qs}` : ''}`)
   }
 
   open(params: { subagent?: string; cwd?: string; session?: string; timeout?: number }) {
@@ -85,7 +89,15 @@ export class SubagentClient {
   }
 
   status(session: string) { return this.request('GET', `/session/${session}/status`) }
-  check(session: string) { return this.request('GET', `/session/${session}/check`) }
+
+  check(session: string, wait?: string, timeout?: number, output?: string) {
+    const params = new URLSearchParams()
+    wait && params.set('wait', wait)
+    timeout && params.set('timeout', String(timeout))
+    output && params.set('output', output)
+    const qs = params.toString()
+    return this.request('GET', `/session/${session}/check${qs ? `?${qs}` : ''}`)
+  }
 
   output(session: string, type = 'screen') {
     return this.request('GET', `/session/${session}/output/${type}`)
@@ -95,5 +107,7 @@ export class SubagentClient {
   exit(session: string) { return this.request('POST', `/session/${session}/exit`) }
   close(session: string) { return this.request('POST', `/session/${session}/close`) }
   delete(session: string) { return this.request('DELETE', `/session/${session}`) }
+  deleteClosed() { return this.request('DELETE', '/sessions/closed') }
+  deleteAll() { return this.request('DELETE', '/sessions/all') }
   closeAll() { return this.request('POST', '/close') }
 }

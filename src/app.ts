@@ -135,14 +135,14 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
     ok(ctx, { subagents: list })
   })
 
-  // GET /api/sessions?cwd=xxx
+  // GET /api/sessions?cwd=xxx&status=IDLE
   router.get('/sessions', (ctx) => {
     const cwdFilter = ctx.query.cwd as string | undefined
+    const statusFilter = ctx.query.status as string | undefined
+
     const active = Array.from(sessions.entries())
       .map(([id, adapter]) => ({ session: id, ...adapter.status(), prompts: adapter.getPrompts() }))
-      .filter(s => !cwdFilter || s.cwd === cwdFilter)
 
-    // Include disk-only (closed) sessions
     const sessDir = join(getHome(), 'sessions')
     const closed = existsSync(sessDir)
       ? readdirSync(sessDir)
@@ -151,13 +151,20 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
           const cfgFile = join(sessDir, id, 'config.json')
           if (!existsSync(cfgFile)) return null
           const saved = JSON.parse(readFileSync(cfgFile, 'utf-8'))
-          if (cwdFilter && saved.cwd !== cwdFilter) return null
-          return { session: id, state: 'CLOSED', subagent: saved.subagent, cwd: saved.cwd, created_at: saved.created_at, prompts: [] }
+          return {
+            session: id, state: 'CLOSED' as const,
+            subagent: saved.subagent, adapter: saved.adapter,
+            cwd: saved.cwd, created_at: saved.created_at, prompts: [] as string[],
+          }
         })
-        .filter(Boolean)
+        .filter(Boolean) as Array<{ session: string; state: string; subagent: string; adapter: string; cwd: string; created_at: string; prompts: string[] }>
       : []
 
-    ok(ctx, { sessions: [...active, ...closed] })
+    const all = [...active, ...closed]
+      .filter(s => !cwdFilter || s.cwd === cwdFilter)
+      .filter(s => !statusFilter || s.state === statusFilter)
+
+    ok(ctx, { sessions: all })
   })
 
   // POST /api/open
@@ -288,10 +295,36 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
     ok(ctx, { session: ctx.params.id, ...adapter.status() })
   })
 
-  // GET /api/session/:id/check (screen-calibrated state)
+  // GET /api/session/:id/check (screen-calibrated state, optional polling)
   router.get('/session/:id/check', async (ctx) => {
     const adapter = getAdapter(ctx); if (!adapter) return
-    ok(ctx, { session: ctx.params.id, ...await adapter.check() })
+    const waitState = ctx.query.wait as string | undefined
+    const timeout = Number(ctx.query.timeout ?? 0)
+    const outputType = ctx.query.output as 'screen' | 'history' | 'last' | undefined
+
+    const poll = async (): Promise<Record<string, unknown>> => {
+      const s = await adapter.check()
+      const result: Record<string, unknown> = { session: ctx.params.id, ...s }
+      if (outputType) {
+        const o = await adapter.getOutput(outputType)
+        result.output = o.content
+      }
+      return result
+    }
+
+    if (!waitState) {
+      ok(ctx, await poll()); return
+    }
+
+    const deadline = timeout > 0 ? Date.now() + timeout * 1000 : 0
+    while (true) {
+      const result = await poll()
+      if (result.state === waitState) { ok(ctx, result); return }
+      if (deadline > 0 && Date.now() >= deadline) {
+        fail(ctx, 408, 'TIMEOUT', `Timed out waiting for state ${waitState}`); return
+      }
+      await new Promise(r => setTimeout(r, 1000))
+    }
   })
 
   // GET /api/session/:id/output/:type
@@ -334,6 +367,31 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
     checkAutoExit()
   })
 
+  // DELETE /api/sessions/closed (batch delete closed sessions)
+  router.del('/sessions/closed', (ctx) => {
+    const sessDir = join(getHome(), 'sessions')
+    const deleted = existsSync(sessDir)
+      ? readdirSync(sessDir)
+        .filter(id => !sessions.has(id))
+        .map(id => { deleteSessionDir(id); return id })
+      : []
+    ok(ctx, { deleted })
+  })
+
+  // DELETE /api/sessions/all (close active + delete all)
+  router.del('/sessions/all', (ctx) => {
+    const deleted: string[] = []
+    sessions.forEach((adapter, id) => { adapter.close(); closeViewerSockets(id); deleted.push(id) })
+    sessions.clear()
+    const sessDir = join(getHome(), 'sessions')
+    existsSync(sessDir) && readdirSync(sessDir).forEach(id => {
+      deleteSessionDir(id)
+      !deleted.includes(id) && deleted.push(id)
+    })
+    ok(ctx, { deleted })
+    checkAutoExit()
+  })
+
   // POST /api/close (close all, keep dirs)
   router.post('/close', (ctx) => {
     const closed = Array.from(sessions.entries()).map(([id, adapter]) => { adapter.close(); closeViewerSockets(id); return id })
@@ -354,10 +412,23 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
         ctx.body = VIEWER_HTML
       } else {
         ctx.type = 'html'
-        const items = Array.from(sessions.entries()).map(([id, a]) => {
+        const activeItems = Array.from(sessions.entries()).map(([id, a]) => {
           const s = a.status()
-          return `<li><a href="/viewer?session=${id}">${id}</a> — ${s.subagent} (${s.state})</li>`
-        }).join('\n')
+          return `<li><a href="/viewer?session=${id}" target="_blank">${id}</a> — ${s.subagent} (${s.state})</li>`
+        })
+        const sessDir = join(getHome(), 'sessions')
+        const closedItems = existsSync(sessDir)
+          ? readdirSync(sessDir)
+            .filter(id => !sessions.has(id))
+            .map(id => {
+              const cfgFile = join(sessDir, id, 'config.json')
+              if (!existsSync(cfgFile)) return ''
+              const saved = JSON.parse(readFileSync(cfgFile, 'utf-8'))
+              return `<li style="opacity:0.5">${id} — ${saved.subagent ?? 'unknown'} (CLOSED)</li>`
+            })
+            .filter(Boolean)
+          : []
+        const items = [...activeItems, ...closedItems].join('\n')
         ctx.body = `<!DOCTYPE html><html><body><h1>Sessions</h1><ul>${items}</ul></body></html>`
       }
     } else {

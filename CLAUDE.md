@@ -4,7 +4,7 @@
 
 ## 项目定位
 
-Node.js + TypeScript CLI 工具，让 AI 通过 CLI 命令控制已有的编程终端（Claude Code、Codex、Gemini CLI 等），实现跨终端、跨模型的多 Agent 协作。MVP 版本采用终端控制（PTY + 屏幕解析）方式实现，支持进程隔离、两阶段审批、session 持久化。
+Node.js + TypeScript CLI 工具，让 AI 通过 CLI 命令控制已有的编程终端（Claude Code、Codex 等），实现跨终端、跨模型的多 Agent 协作。MVP 版本采用终端控制（PTY + 屏幕解析）方式实现，支持进程隔离、两阶段审批、session 持久化。
 
 ## 技术栈
 

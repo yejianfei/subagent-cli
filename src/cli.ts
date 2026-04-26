@@ -8,7 +8,7 @@ declare const __VERSION__: string
 program
   .name('subagent-cli')
   .version(__VERSION__)
-  .description('Delegate tasks to sub-agent CLI instances (Claude Code, Codex, etc.)')
+  .description('Let your AI agent drive other AI agents (Claude Code, Codex, etc.)')
   .option('-c, --config <path>', 'Config file path (default: ~/.subagent-cli/config.json)')
   .hook('preAction', () => {
     const opts = program.opts<{ config?: string }>()
@@ -18,13 +18,23 @@ program
 Workflow:
   1. subagent-cli subagents                      # list available subagents
   2. subagent-cli open -s haiku --cwd .            # start session, returns session ID
-  3. subagent-cli prompt --session <id> "task"   # send task, done returns output field
-  4. subagent-cli approve --session <id>         # approve tool use, done returns output
+  3. subagent-cli check --session <id>           # verify state before every command!
+  4. subagent-cli prompt --session <id> "task"   # send task, done returns output field
+  5. subagent-cli approve --session <id>         # approve tool use, done returns output
      subagent-cli approve --session <id> "text"  # type selection/message, then approve
      subagent-cli reject --session <id> "reason" # reject with instruction (Escape + text)
      subagent-cli allow --session <id>           # approve + don't ask again for similar ops
-  5. subagent-cli output --session <id> --type last  # get last reply (TUI chrome stripped)
-  6. subagent-cli close --session <id>           # stop session (history kept)
+  6. subagent-cli output --session <id> --type last  # get last reply (TUI chrome stripped)
+  7. subagent-cli close --session <id>           # stop session (history kept)
+
+Important: Always run "check" before prompt/approve/reject/allow.
+  Internal state may drift from actual terminal state. "check" reads
+  the live screen and returns the authoritative state. Use --force
+  if you need to send a key regardless of state.
+
+Wait for state:
+  subagent-cli check --session <id> --wait IDLE              # poll until IDLE
+  subagent-cli check --session <id> --wait IDLE --output last # poll + return output
 
 All commands output JSON wrapped in delimiters:
   =====SUBAGENT_JSON=====
@@ -33,10 +43,13 @@ All commands output JSON wrapped in delimiters:
 
 Session recovery:
   subagent-cli sessions --cwd .                  # find sessions by working directory
+  subagent-cli sessions --status CLOSED          # list closed sessions
   subagent-cli open --session <id>               # reconnect to existing session
 
 Cleanup:
   subagent-cli delete --session <id>             # permanently delete session and history
+  subagent-cli delete --closed                   # delete all closed sessions
+  subagent-cli delete --all                      # close active + delete all
   subagent-cli close                             # close all sessions (keep history)
 
 Config: ~/.subagent-cli/config.json  (override with -c)
@@ -70,8 +83,9 @@ program
   .command('sessions')
   .description('List sessions (active + closed)')
   .option('--cwd <dir>', 'Filter by working directory')
+  .option('--status <state>', 'Filter by state (e.g. IDLE, RUNNING, ASKING, CLOSED)')
   .action(async (opts) => {
-    await output(await client().getSessions(opts.cwd))
+    await output(await client().getSessions(opts.cwd, opts.status))
   })
 
 program
@@ -148,10 +162,13 @@ program
 
 program
   .command('check')
-  .description('Get screen-calibrated session state (authoritative). Note: may briefly return RUNNING for 1-3s after task completion due to terminal refresh delay — retry if needed')
+  .description('Get screen-calibrated session state (authoritative). Use --wait to poll until target state')
   .requiredOption('--session <id>', 'Session ID')
+  .option('--wait <state>', 'Poll until session reaches this state (e.g. IDLE, ASKING)')
+  .option('--timeout <seconds>', 'Timeout for --wait polling (0 = no timeout)', '0')
+  .option('--output <type>', 'Include output when target state reached (screen|history|last)')
   .action(async (opts) => {
-    await output(await client().check(opts.session))
+    await output(await client().check(opts.session, opts.wait, Number(opts.timeout), opts.output))
   })
 
 program
@@ -194,9 +211,19 @@ program
 program
   .command('delete')
   .description('Permanently delete session and history')
-  .requiredOption('--session <id>', 'Session ID')
+  .option('--session <id>', 'Session ID')
+  .option('--closed', 'Delete all closed sessions')
+  .option('--all', 'Close active sessions and delete all')
   .action(async (opts) => {
-    await output(await client().delete(opts.session))
+    if (opts.all) {
+      await output(await client().deleteAll())
+    } else if (opts.closed) {
+      await output(await client().deleteClosed())
+    } else if (opts.session) {
+      await output(await client().delete(opts.session))
+    } else {
+      await output({ success: false, data: { error: 'INVALID_STATE', message: 'Specify --session <id>, --closed, or --all' } })
+    }
   })
 
 program.parseAsync()

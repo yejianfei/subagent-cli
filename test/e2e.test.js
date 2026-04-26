@@ -58,7 +58,7 @@ async function fetchViewerSessions() {
   const port = getPort()
   const res = await fetch(`http://localhost:${port}/viewer`)
   const html = await res.text()
-  const regex = /session=([^"]+)">[^<]+<\/a>\s*—\s*(\w+)\s*\((\w+)\)/g
+  const regex = /session=([^"]+)"[^>]*>[^<]+<\/a>\s*—\s*(\w[\w-]*)\s*\((\w+)\)/g
   const sessions = []
   let match
   while ((match = regex.exec(html)) !== null) {
@@ -733,6 +733,104 @@ describe('E2E: Single session real task', { timeout: 900_000 }, () => {
     await verifyViewerNoSession(sessionId)
     const { json: sessions } = await cli(['sessions'])
     assert.ok(!sessions.data.sessions.some(s => s.session === sessionId))
+  })
+
+  after(async () => {
+    await cleanupSession(sessionId)
+    rmSync(tmpDir, { recursive: true, force: true })
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════
+// New features: check --wait, sessions --status, delete --closed, [subagent-cli] prefix
+// ══════════════════════════════════════════════════════════════════
+
+describe('E2E: New features (v0.1.11)', { timeout: 600_000 }, () => {
+  let sessionId
+  let tmpDir
+
+  it('㊵ warm-start daemon + open session', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'subagent-new-'))
+    // Daemon may have auto-exited after previous suite cleanup. Ensure it's alive.
+    const { json: sa } = await cli(['subagents'])
+    assert.equal(sa.success, true, 'Daemon should be reachable')
+    console.log(`    Daemon alive, ${sa.data.subagents.length} subagent(s)`)
+
+    const { json } = await cli(['open', '-s', 'haiku', '--cwd', tmpDir], 300_000)
+    console.log(`    Open result: ${JSON.stringify(json).substring(0, 300)}`)
+    assert.equal(json.success, true, `Open failed: ${json.data?.error} — ${json.data?.message}`)
+    sessionId = json.data.session
+    console.log(`    New features session: ${sessionId}`)
+    assert.ok(sessionId)
+  })
+
+  it('㊶ check --wait IDLE (already idle, returns immediately)', async () => {
+    const { json } = await cli(['check', '--session', sessionId, '--wait', 'IDLE', '--timeout', '30'])
+    assert.equal(json.success, true)
+    assert.equal(json.data.state, 'IDLE')
+  })
+
+  it('㊷ check --wait IDLE --output last (returns with output field)', async () => {
+    const { json } = await cli(['check', '--session', sessionId, '--wait', 'IDLE', '--timeout', '10', '--output', 'last'])
+    assert.equal(json.success, true)
+    assert.equal(json.data.state, 'IDLE')
+    assert.equal(typeof json.data.output, 'string')
+  })
+
+  it('㊸ check --wait RUNNING --timeout 3 (not running, should timeout)', async () => {
+    const { json } = await cli(['check', '--session', sessionId, '--wait', 'RUNNING', '--timeout', '3'], 30_000)
+    console.log(`    Timeout result: success=${json.success}, error=${json.data?.error}`)
+    assert.equal(json.success, false)
+    assert.equal(json.data.error, 'TIMEOUT')
+  })
+
+  it('㊹ sessions --status IDLE includes this session', async () => {
+    // Verify session is still alive after timeout test
+    const { json: st } = await cli(['status', '--session', sessionId])
+    console.log(`    Status before filter: ${st.data.state}`)
+    const { json } = await cli(['sessions', '--status', st.data.state])
+    assert.equal(json.success, true)
+    const found = json.data.sessions.some(s => s.session === sessionId)
+    if (!found) {
+      console.log(`    All sessions: ${JSON.stringify(json.data.sessions.map(s => ({ s: s.session, st: s.state })))}`)
+    }
+    assert.ok(found, `Session ${sessionId} not found with status ${st.data.state}`)
+  })
+
+  it('㊺ sessions --status RUNNING excludes idle session', async () => {
+    const { json } = await cli(['sessions', '--status', 'RUNNING'])
+    assert.equal(json.success, true)
+    assert.ok(!json.data.sessions.some(s => s.session === sessionId))
+  })
+
+  it('㊻ session config exists on disk', () => {
+    assert.ok(sessionId, 'sessionId should be set')
+    const configPath = join(homedir(), '.subagent-cli', 'sessions', sessionId, 'config.json')
+    assert.ok(existsSync(configPath), `Session config not found: ${configPath}`)
+  })
+
+  it('㊼ close session, verify CLOSED in sessions list', async () => {
+    const { json: closeResult } = await cli(['close', '--session', sessionId])
+    console.log(`    Close result: ${JSON.stringify(closeResult.data)}`)
+    const { json } = await cli(['sessions', '--status', 'CLOSED'])
+    const found = json.data.sessions.some(s => s.session === sessionId && s.state === 'CLOSED')
+    if (!found) {
+      console.log(`    CLOSED sessions: ${JSON.stringify(json.data.sessions.map(s => ({ s: s.session, st: s.state })))}`)
+    }
+    assert.ok(found, 'Closed session should appear in sessions --status CLOSED')
+  })
+
+  it('㊽ delete --closed removes all closed sessions', async () => {
+    const { json: before } = await cli(['sessions', '--status', 'CLOSED'])
+    console.log(`    Closed before delete: ${before.data.sessions.length}`)
+    assert.ok(before.data.sessions.length > 0, 'Should have at least 1 closed session')
+
+    const { json } = await cli(['delete', '--closed'])
+    assert.equal(json.success, true)
+    console.log(`    Deleted: ${json.data.deleted}`)
+
+    const { json: after } = await cli(['sessions', '--status', 'CLOSED'])
+    assert.equal(after.data.sessions.length, 0, 'All closed sessions should be deleted')
   })
 
   after(async () => {

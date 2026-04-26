@@ -554,6 +554,71 @@ describe('E2E: Codex single session', { timeout: 900_000 }, () => {
 })
 
 // ══════════════════════════════════════════════════════════════════
+// New features: check --wait, sessions --status, delete --closed, [subagent-cli] prefix
+// ══════════════════════════════════════════════════════════════════
+
+describe('E2E: Codex new features (v0.1.11)', { timeout: 600_000 }, () => {
+  let sessionId
+  let tmpDir
+
+  it('㉔ warm-start daemon + open codex session', async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'subagent-codex-new-'))
+    const { json: sa } = await cli(['subagents'])
+    assert.equal(sa.success, true, 'Daemon should be reachable')
+    console.log(`    Daemon alive, ${sa.data.subagents.length} subagent(s)`)
+
+    const { json } = await cli(['open', '-s', 'codex', '--cwd', tmpDir])
+    assert.equal(json.success, true)
+    sessionId = json.data.session
+    console.log(`    New features session: ${sessionId}`)
+    assert.ok(sessionId)
+  })
+
+  it('㉕ check --wait IDLE (already idle)', async () => {
+    const { json } = await cli(['check', '--session', sessionId, '--wait', 'IDLE', '--timeout', '30'])
+    assert.equal(json.success, true)
+    assert.equal(json.data.state, 'IDLE')
+  })
+
+  it('㉖ check --wait IDLE --output last', async () => {
+    const { json } = await cli(['check', '--session', sessionId, '--wait', 'IDLE', '--timeout', '10', '--output', 'last'])
+    assert.equal(json.success, true)
+    assert.equal(json.data.state, 'IDLE')
+    assert.equal(typeof json.data.output, 'string')
+  })
+
+  it('㉗ sessions --status IDLE includes this session', async () => {
+    const { json } = await cli(['sessions', '--status', 'IDLE'])
+    assert.ok(json.data.sessions.some(s => s.session === sessionId))
+  })
+
+  it('㉘ session config exists on disk', () => {
+    const configPath = join(homedir(), '.subagent-cli', 'sessions', sessionId, 'config.json')
+    assert.ok(existsSync(configPath), 'Session config should exist on disk')
+  })
+
+  it('㉙ close + verify CLOSED in sessions --status CLOSED', async () => {
+    await cli(['close', '--session', sessionId])
+    const { json } = await cli(['sessions', '--status', 'CLOSED'])
+    assert.ok(json.data.sessions.some(s => s.session === sessionId && s.state === 'CLOSED'))
+  })
+
+  it('㉚ delete --closed removes closed sessions', async () => {
+    const { json } = await cli(['delete', '--closed'])
+    assert.equal(json.success, true)
+    assert.ok(json.data.deleted.length > 0)
+
+    const { json: after } = await cli(['sessions', '--status', 'CLOSED'])
+    assert.ok(!after.data.sessions.some(s => s.session === sessionId))
+  })
+
+  after(async () => {
+    await cleanupSession(sessionId)
+    rmSync(tmpDir, { recursive: true, force: true })
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════
 // Cleanup
 // ══════════════════════════════════════════════════════════════════
 
