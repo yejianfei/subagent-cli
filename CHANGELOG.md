@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.12] - 2026-04-27
+
+### Fixed
+- Detection engine: state fallback — `onIdle` handles ASKING→IDLE, `onAsking` handles IDLE→ASKING, preventing sessions stuck in wrong state
+- Detection engine: removed probe verification that sent space to confirm IDLE (Codex shows `tab to queue` even when idle, causing infinite RUNNING loop)
+- Detection engine: probe residue cleanup — clear lingering `tab to queue` with Ctrl+U before re-detecting
+
+### Added
+- Codex `onInit`: handle model migration prompt (`Try new model` → select "Use existing model")
+
 ## [0.1.11] - 2026-04-26
 
 ### Added

@@ -98,22 +98,17 @@ describe('Adapter base class behavior', () => {
     })
   })
 
-  // ── onIdle defense: ASKING state not downgraded by detection ──
+  // ── onIdle fallback: ASKING → IDLE allowed for state drift recovery ──
 
-  describe('onIdle ignores ASKING state', () => {
-    it('ASKING state is preserved when detection sees IDLE', () => {
+  describe('onIdle fallback from ASKING state', () => {
+    it('ASKING → IDLE transitions and emits done (state drift recovery)', () => {
       const a = new TestableAdapter()
       a.state = 'ASKING'
-      // Simulate detection engine calling onIdle (private, so trigger via emit pattern)
-      // onIdle is called by detection when detect() returns IDLE.
-      // After fix, onIdle should NOT transition ASKING → IDLE.
-      // We verify by checking that no 'done' event is emitted and state stays ASKING.
-      let emitted = false
-      a.once('done', () => { emitted = true })
-      // Access private onIdle via prototype trick
+      let result = null
+      a.once('done', (r) => { result = r })
       Object.getPrototypeOf(Object.getPrototypeOf(a))['onIdle'].call(a)
-      assert.equal(a.getState(), 'ASKING', 'state must remain ASKING')
-      assert.equal(emitted, false, 'done event must not be emitted')
+      assert.equal(a.getState(), 'IDLE', 'state transitions to IDLE')
+      assert.equal(result.status, 'done', 'done event emitted with status done')
     })
 
     it('PENDING → IDLE still works (legitimate transition)', () => {

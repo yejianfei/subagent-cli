@@ -446,24 +446,16 @@ export abstract class SubagentCliAdapter extends EventEmitter {
       const screen = this.terminal.capture(this.terminal.totalLines)
       let result = this.detect(screen)
 
-      // Probe verification: when IDLE detected while RUNNING and probe is configured,
-      // verify by sending probe+Ctrl+U to confirm truly idle (not a brief gap between tools).
-      // Also handles probe residue: "tab to queue" persisting after task ends.
+      // Probe residue cleanup: when state is RUNNING but screen shows "tab to queue"
+      // without "esc to interrupt", the probe character from a previous tick may be lingering.
+      // Send Ctrl+U to clear it, then re-detect to get a clean reading.
       const rules = this.getAdapterDetectRules()
       if (this.state === 'RUNNING' && rules.probe) {
-        const needsVerify = (result === 'IDLE' && !screen.includes('esc to interrupt'))
-          || (result === 'RUNNING' && screen.includes('tab to queue') && !screen.includes('esc to interrupt'))
-        if (needsVerify) {
-          this.terminal.write(rules.probe)
-          await this.wait(200)
-          this.terminal.write('\x15') // Ctrl+U: clear probe
+        if (result === 'RUNNING' && screen.includes('tab to queue') && !screen.includes('esc to interrupt')) {
+          this.terminal.write('\x15') // Ctrl+U: clear possible probe residue
           await this.wait(300)
           await this.terminal.flush()
           result = this.detect(this.terminal.capture(this.terminal.totalLines))
-          if (result !== 'IDLE') {
-            this.terminal.write(rules.probe)
-            return
-          }
         }
       }
 
@@ -491,6 +483,8 @@ export abstract class SubagentCliAdapter extends EventEmitter {
 
   private onIdle(): void {
     switch (this.state) {
+      case 'IDLE':
+        return
       case 'OPENING':
       case 'INITING':
         this.state = 'IDLE'
@@ -498,6 +492,7 @@ export abstract class SubagentCliAdapter extends EventEmitter {
         break
       case 'PENDING':
       case 'RUNNING':
+      case 'ASKING':
         this.state = 'IDLE'
         this.emit('done', { status: 'done' } as PromptResult)
         break
@@ -507,6 +502,8 @@ export abstract class SubagentCliAdapter extends EventEmitter {
   private onAsking(): void {
     const rules = this.getAdapterDetectRules()
     switch (this.state) {
+      case 'ASKING':
+        return
       case 'OPENING':
       case 'INITING':
         // Trust dialog during startup — auto-confirm
@@ -514,6 +511,7 @@ export abstract class SubagentCliAdapter extends EventEmitter {
         break
       case 'PENDING':
       case 'RUNNING':
+      case 'IDLE':
         if (this.autoApproveEnabled) {
           this.state = 'PENDING'
           this.terminal?.write(rules.input_keys.approve)
@@ -529,8 +527,6 @@ export abstract class SubagentCliAdapter extends EventEmitter {
   private onRunning(): void {
     if (this.state === 'PENDING') {
       this.state = 'RUNNING'
-      // Send probe character once to trigger running indicator on screen
-      // (e.g. Codex shows "tab to queue message" when input is non-empty)
       const probe = this.getAdapterDetectRules().probe
       if (probe) this.terminal.write(probe)
     }

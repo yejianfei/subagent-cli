@@ -55,8 +55,9 @@ export class CodexAdapter extends SubagentCliAdapter {
         return
       }
 
-      if (screen.includes('Update available')) {
-        this.terminal.write('\x1b[B')  // Down arrow → Skip
+      if (screen.includes('Update available')
+          || screen.includes('Try new model')) {
+        this.terminal.write('\x1b[B')  // Down arrow → Skip / Use existing model
         await this.wait(200)
         this.terminal.write('\r')
         continue
