@@ -1,14 +1,18 @@
 # Changelog
 
-## [0.1.12] - 2026-04-27
+## [0.1.13] - 2026-04-28
+
+### Added
+- `check --wait` returns `409 APPROVAL_NEEDED` immediately when session enters ASKING, instead of waiting until timeout
+- Codex `onInit`: handle model migration prompt (`Try new model` → select "Use existing model")
 
 ### Fixed
 - Detection engine: state fallback — `onIdle` handles ASKING→IDLE, `onAsking` handles IDLE→ASKING, preventing sessions stuck in wrong state
 - Detection engine: removed probe verification that sent space to confirm IDLE (Codex shows `tab to queue` even when idle, causing infinite RUNNING loop)
 - Detection engine: probe residue cleanup — clear lingering `tab to queue` with Ctrl+U before re-detecting
 
-### Added
-- Codex `onInit`: handle model migration prompt (`Try new model` → select "Use existing model")
+### Changed
+- README: skill templates rewritten — "Coding Delegation" shows independent development flow, "Independent Review Loop" shows cross-model review with auto-fix cycle
 
 ## [0.1.11] - 2026-04-26
 

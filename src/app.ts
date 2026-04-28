@@ -320,6 +320,9 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
     while (true) {
       const result = await poll()
       if (result.state === waitState) { ok(ctx, result); return }
+      if (result.state === 'ASKING') {
+        fail(ctx, 409, 'APPROVAL_NEEDED', 'Session requires approval'); return
+      }
       if (deadline > 0 && Date.now() >= deadline) {
         fail(ctx, 408, 'TIMEOUT', `Timed out waiting for state ${waitState}`); return
       }

@@ -292,6 +292,18 @@ describe('E2E: Codex single session', { timeout: 900_000 }, () => {
     console.log(`    Status: ${json.data.status}`)
   })
 
+  it('⑦½ check --wait IDLE during ASKING → APPROVAL_NEEDED', async () => {
+    const { json: status } = await cli(['status', '--session', sessionId])
+    if (status.data.state !== 'ASKING') {
+      console.warn('    \x1b[33m⚠ FALLBACK: not in ASKING state, skipping APPROVAL_NEEDED test\x1b[0m')
+      return
+    }
+    const { json } = await cli(['check', '--session', sessionId, '--wait', 'IDLE', '--timeout', '5'], 30_000)
+    assert.equal(json.success, false)
+    assert.equal(json.data.error, 'APPROVAL_NEEDED')
+    console.log(`    check --wait IDLE during ASKING: ${json.data.error}`)
+  })
+
   it('⑧ reject → agent retries → approve to done', async () => {
     const { json: status } = await cli(['status', '--session', sessionId])
     if (status.data.state !== 'ASKING') {

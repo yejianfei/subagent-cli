@@ -35,6 +35,7 @@ Important: Always run "check" before prompt/approve/reject/allow.
 Wait for state:
   subagent-cli check --session <id> --wait IDLE              # poll until IDLE
   subagent-cli check --session <id> --wait IDLE --output last # poll + return output
+  (--wait returns 409 APPROVAL_NEEDED immediately if session enters ASKING)
 
 All commands output JSON wrapped in delimiters:
   =====SUBAGENT_JSON=====

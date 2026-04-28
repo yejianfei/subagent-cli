@@ -79,6 +79,7 @@ Run `subagent-cli --help` for all commands.
 - `check --session <id> --wait IDLE`               - Poll until IDLE
 - `check --session <id> --wait IDLE --output last`  - Poll + return extracted reply
 - `check --session <id> --wait IDLE --timeout 30`   - Poll with timeout
+- If the session enters ASKING during `--wait`, returns immediately with `409 APPROVAL_NEEDED`
 
 ## Session Management
 
@@ -99,59 +100,53 @@ Run `subagent-cli --help` for all commands.
 
 ```markdown
 ---
-name: subagent-coding-delegation
-description: Delegate coding tasks to sub-agents with task scoping, structured prompts, and approval control
+name: subagent-code-developer
+description: Delegate coding tasks to sub-agents for independent execution
 ---
 
-Delegate coding tasks to sub-agents. Reuse sessions for iterations on the same task.
+Delegate coding tasks to sub-agents. The sub-agent works independently in its own
+terminal — the main agent only handles approvals and collects results.
 
-## Before Delegating
+## Flow
 
-- Run `subagent-cli subagents` to confirm available sub-agents.
-- Run `subagent-cli sessions --cwd .` to check for reusable sessions.
-- Estimate task scope — if changes are under ~50 lines, consider doing it directly.
+1. `subagent-cli sessions --cwd . --status IDLE` — reuse existing sessions first.
+2. `subagent-cli open -s <subagent> --cwd <dir>` — new session only if needed.
+3. `subagent-cli prompt --session <id> "<task>"` — blocks until done or approval needed.
+4. Handle approvals: `approve` / `reject "reason"` / `allow`.
+5. `check --wait IDLE --output last` — wait for completion and get extracted reply.
+   Returns 409 APPROVAL_NEEDED immediately if approval is required.
 
-## Task Prompt Structure
+## Task Prompt
 
-Send self-contained task prompts. Include:
-- **Goal**: what to achieve
-- **Scope**: which files/directories to modify
-- **Constraints**: project rules, safety boundaries
-- **Verification**: commands to run after completion
+Send self-contained tasks — the sub-agent has no shared context with the main agent:
 
-## Approval Strategy
-
-- Use `approve` to review each tool call individually.
-- Use `allow` when the task scope is clear and low-risk.
-- Use `auto --session <id>` to auto-approve all tool calls in the session.
-- Use `reject "instruction"` to redirect with new guidance.
-- For delete/overwrite/large refactors, always review individually — do not auto-approve.
+    Goal: <what to achieve>
+    Scope: <files/directories to modify>
+    Constraints: <project rules, boundaries>
+    Verification: <commands to run>
 ```
 
-### Independent Review
+### Independent Review Loop
 
 ```markdown
 ---
-name: subagent-independent-review
-description: Delegate review tasks to a different model family for cross-vendor oversight
+name: subagent-review-loop
+description: Delegate review to a different model, auto-fix findings, re-review until clean
 ---
 
-Delegate review tasks to a sub-agent running a different model family for cross-vendor oversight.
+Delegate review to a sub-agent running a different model (e.g. Codex reviews Claude output).
+Auto-fix mechanical issues and re-review in a loop until all issues are resolved.
 
-## Workflow
+## Flow
 
-1. Open or reuse a session with a different adapter (e.g. `codex` for reviewing Claude Code output).
-2. Send a review prompt describing what to review and the review criteria.
-3. The sub-agent reviews independently and returns findings.
-4. Handle approvals as needed — reviewers may need file read access.
-5. Collect the review output and act on findings.
-6. For multi-round review, reuse the same session — send follow-up prompts after fixing issues.
-
-## Rules
-
-- The reviewer only reviews — it does not modify source files.
-- Reuse the same session for follow-up review rounds on the same document.
-- If the reviewer times out, use `check` + `output` to retrieve partial results.
+1. Open a session with a different adapter than the one that wrote the code.
+2. Send review prompt with file path and criteria.
+3. Sub-agent returns findings categorized as:
+   - **Auto-fixable** (naming, types, logic errors) — main agent fixes and re-reviews.
+   - **Needs user decision** (architecture, scope) — escalate to user.
+4. After fixing, send re-review prompt in the same session.
+5. Sub-agent re-reads the full file from scratch and re-evaluates.
+6. Repeat until clean. Reuse the same session for all review rounds.
 ```
 
 ## Supported Terminals
@@ -175,7 +170,7 @@ Delegate review tasks to a sub-agent running a different model family for cross-
 | `auto`      | `--session <id>` `--off`                                                 | Toggle auto-approve for the session                              |
 | `cancel`    | `--session <id>`                                                         | Cancel running task                                              |
 | `status`    | `--session <id>`                                                         | Get internal session state (sync)                                |
-| `check`     | `--session <id>` `--wait <state>` `--timeout <s>` `--output <type>`     | Get state. `--wait` polls until target state reached             |
+| `check`     | `--session <id>` `--wait <state>` `--timeout <s>` `--output <type>`     | Get state. `--wait` polls until target state; 409 if ASKING      |
 | `output`    | `--session <id>` `--type <screen\|history\|last>`                       | Get terminal output. `last` = extracted sub-agent reply          |
 | `close`     | `--session <id>`                                                         | Close session (omit `--session` to close all). History preserved |
 | `delete`    | `--session <id>` `--closed` `--all`                                      | Delete session, all closed, or everything                        |

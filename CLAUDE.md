@@ -102,7 +102,7 @@ webpack.config.js            # webpack 配置 (双入口 + externals)
 | POST | `/api/session/:id/allow` | **长轮询** | 批准并允许本 session 同类操作 (Shift+Tab) |
 | POST | `/api/session/:id/reject` | **长轮询** | 拒绝审批 (Escape)，可附带新指令 |
 | GET | `/api/session/:id/status` | 否 | 查询内部状态（同步，快速） |
-| GET | `/api/session/:id/check` | 否 | 屏幕校准状态（async，flush+capture 底部 5 行 → detect） |
+| GET | `/api/session/:id/check` | 否 | 屏幕校准状态（async，flush+capture 底部 5 行 → detect）。`?wait=` 轮询目标状态，遇 ASKING 立即返回 409 |
 | GET | `/api/session/:id/output/:type` | 否 | 获取输出 (screen/history/last) |
 | POST | `/api/session/:id/close` | 否 | 关闭 session（保留 history） |
 | DELETE | `/api/session/:id` | 否 | 删除 session（彻底清除目录） |

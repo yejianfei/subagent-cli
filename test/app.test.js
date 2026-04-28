@@ -526,6 +526,27 @@ describe('App HTTP API', () => {
       assert.equal(res.body.data.state, 'IDLE')
       assert.equal(typeof res.body.data.output, 'string')
     })
+
+    it('should return APPROVAL_NEEDED when ASKING interrupts wait', async () => {
+      const adp = ctx.sessions.get(sessionId)
+      adp._setState('ASKING')
+      const res = await agent.get(`/api/session/${sessionId}/check?wait=IDLE&timeout=10`).expect(409)
+      assert.equal(res.body.data.error, 'APPROVAL_NEEDED')
+    })
+
+    it('should return APPROVAL_NEEDED when waiting for RUNNING but ASKING', async () => {
+      const adp = ctx.sessions.get(sessionId)
+      adp._setState('ASKING')
+      const res = await agent.get(`/api/session/${sessionId}/check?wait=RUNNING&timeout=10`).expect(409)
+      assert.equal(res.body.data.error, 'APPROVAL_NEEDED')
+    })
+
+    it('should return OK when waiting for ASKING and state is ASKING', async () => {
+      const adp = ctx.sessions.get(sessionId)
+      adp._setState('ASKING')
+      const res = await agent.get(`/api/session/${sessionId}/check?wait=ASKING&timeout=5`).expect(200)
+      assert.equal(res.body.data.state, 'ASKING')
+    })
   })
 
   // ── GET /api/sessions — status filter ──
