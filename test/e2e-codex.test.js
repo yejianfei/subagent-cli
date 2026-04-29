@@ -624,6 +624,22 @@ describe('E2E: Codex new features (v0.1.11)', { timeout: 600_000 }, () => {
     assert.ok(!after.data.sessions.some(s => s.session === sessionId))
   })
 
+  it('㉛ open --role overrides config role in session title', async () => {
+    const customRole = 'You are a senior Java architect.'
+    const roleDir = mkdtempSync(join(tmpdir(), 'subagent-codex-role-'))
+    const { json } = await cli(['open', '-s', 'codex', '--cwd', roleDir, '--role', customRole], 300_000)
+    assert.equal(json.success, true, `Open with role failed: ${json.data?.error}`)
+    const roleSid = json.data.session
+
+    const { json: hist } = await cli(['output', '--session', roleSid, '--type', 'history'])
+    assert.ok(hist.data.content.includes(customRole), 'History should contain custom role text')
+    console.log(`    Custom role found in history: ${customRole.slice(0, 40)}...`)
+
+    await cli(['close', '--session', roleSid])
+    await cli(['delete', '--session', roleSid])
+    rmSync(roleDir, { recursive: true, force: true })
+  })
+
   after(async () => {
     await cleanupSession(sessionId)
     rmSync(tmpDir, { recursive: true, force: true })

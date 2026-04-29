@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.14] - 2026-04-29
+
+### Added
+- `open --role <text>` — custom role prompt overrides config `role`, used as session title in Claude/Codex to distinguish sessions (new sessions only, ignored on resume)
+
+### Fixed
+- Detection engine: capture visible screen only instead of full scrollback — scrollback history contained stale `esc to interrupt` / `tab to queue` causing detect to return RUNNING permanently even when session was idle
+- Detection engine: Codex Phase 2 polling relied on `capture(totalLines)` which hit the same scrollback issue — now delegates to detection engine via state check
+- `status` and `check` return `state: CLOSED` for disk-persisted sessions instead of 404
+
 ## [0.1.13] - 2026-04-28
 
 ### Added

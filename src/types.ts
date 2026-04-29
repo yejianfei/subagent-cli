@@ -9,6 +9,7 @@ export interface OpenParams {
   command: string
   args: string[]
   env: Record<string, string>
+  role?: string
 }
 
 export interface OpenResult {

@@ -845,6 +845,22 @@ describe('E2E: New features (v0.1.11)', { timeout: 600_000 }, () => {
     assert.equal(after.data.sessions.length, 0, 'All closed sessions should be deleted')
   })
 
+  it('㊾ open --role overrides config role in session title', async () => {
+    const customRole = 'You are a senior Java architect.'
+    const roleDir = mkdtempSync(join(tmpdir(), 'subagent-role-'))
+    const { json } = await cli(['open', '-s', 'haiku', '--cwd', roleDir, '--role', customRole], 300_000)
+    assert.equal(json.success, true, `Open with role failed: ${json.data?.error}`)
+    const roleSid = json.data.session
+
+    const { json: hist } = await cli(['output', '--session', roleSid, '--type', 'history'])
+    assert.ok(hist.data.content.includes(customRole), 'History should contain custom role text')
+    console.log(`    Custom role found in history: ${customRole.slice(0, 40)}...`)
+
+    await cli(['close', '--session', roleSid])
+    await cli(['delete', '--session', roleSid])
+    rmSync(roleDir, { recursive: true, force: true })
+  })
+
   after(async () => {
     await cleanupSession(sessionId)
     rmSync(tmpDir, { recursive: true, force: true })

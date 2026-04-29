@@ -162,7 +162,7 @@ Auto-fix mechanical issues and re-review in a loop until all issues are resolved
 | ----------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------- |
 | `subagents` |                                                                          | List available subagent configurations                           |
 | `sessions`  | `--cwd <path>` `--status <state>`                                        | List sessions (active + closed), filter by cwd or state          |
-| `open`      | `-s, --subagent <name>` `--cwd <path>` `--session <id>` `--timeout <s>` | Create new session or resume existing one                        |
+| `open`      | `-s, --subagent <name>` `--cwd <path>` `--session <id>` `--role <text>` `--timeout <s>` | Create or resume session. `--role` overrides config role (new sessions only) |
 | `prompt`    | `--session <id>` `--timeout <s>` `<text>`                                | Send task, blocks until done or approval needed                  |
 | `approve`   | `--session <id>` `--timeout <s>` `-f` `[text]`                          | Approve tool use. Optional text typed before approval            |
 | `allow`     | `--session <id>` `--timeout <s>` `-f`                                    | Approve via option 2. Scope depends on target CLI                |

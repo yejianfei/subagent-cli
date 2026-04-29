@@ -1,5 +1,4 @@
 import { SubagentCliAdapter, registerAdapter } from '../adapter'
-import { loadConfig } from '../config'
 import type { OpenParams, OpenResult, PromptResult, DetectRules, ApprovalInfo } from '../types'
 
 const SESSION_ID_RE = /--resume\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i
@@ -40,15 +39,13 @@ export class ClaudeCodeAdapter extends SubagentCliAdapter {
     }
 
     // New session path
-    const cfg = loadConfig()
     const ms = timeout * 1000
 
     // Phase 1: initial spawn → wait for IDLE
     await super.open(params, session, home, timeout)
 
     // Phase 2: send init prompt to create session
-    const subCfg = cfg.subagents[params.subagent]
-    const initPrompt = `[subagent-cli] ${subCfg?.role ?? 'hi'}`
+    const initPrompt = `[subagent-cli] ${params.role ?? 'hi'}`
     await this.exec<PromptResult>('done', ms, async () => {
       this.terminal.write(initPrompt, true)
       await this.wait(500)

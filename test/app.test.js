@@ -106,6 +106,7 @@ function createMockAdapter() {
     setAutoApprove(v) { adapter.autoApprove = v },
     // Allow test to force state transitions
     _setState: (s) => { state = s },
+    _getParams: () => params,
   })
 
   return adapter
@@ -313,13 +314,36 @@ describe('App HTTP API', () => {
       assert.equal(off.body.data.auto, false)
     })
 
+    it('should pass role to adapter when provided', async () => {
+      const res = await agent
+        .post('/api/open')
+        .send({ subagent: 'test-agent', cwd: VALID_CWD, role: 'You are a Java expert.' })
+        .set('Content-Type', 'application/json')
+        .expect(200)
+      const adp = ctx.sessions.get(res.body.data.session)
+      assert.equal(adp._getParams().role, 'You are a Java expert.')
+      await agent.post(`/api/session/${res.body.data.session}/close`)
+    })
+
+    it('should use config role as fallback when role not provided', async () => {
+      const res = await agent
+        .post('/api/open')
+        .send({ subagent: 'test-agent', cwd: VALID_CWD })
+        .set('Content-Type', 'application/json')
+        .expect(200)
+      const adp = ctx.sessions.get(res.body.data.session)
+      assert.equal(adp._getParams().role, 'You are a helpful assistant.')
+      await agent.post(`/api/session/${res.body.data.session}/close`)
+    })
+
     it('should close session', async () => {
       const res = await agent.post(`/api/session/${sessionId}/close`).expect(200)
       assert.equal(res.body.data.status, 'closed')
     })
 
-    it('should return 404 after session closed', async () => {
-      await agent.get(`/api/session/${sessionId}/status`).expect(404)
+    it('should return CLOSED after session closed (disk fallback)', async () => {
+      const res = await agent.get(`/api/session/${sessionId}/status`).expect(200)
+      assert.equal(res.body.data.state, 'CLOSED')
     })
   })
 

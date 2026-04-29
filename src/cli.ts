@@ -17,7 +17,8 @@ program
   .addHelpText('after', `
 Workflow:
   1. subagent-cli subagents                      # list available subagents
-  2. subagent-cli open -s haiku --cwd .            # start session, returns session ID
+  2. subagent-cli open -s haiku --cwd .             # start session, returns session ID
+     subagent-cli open -s haiku --cwd . --role "Java expert"  # custom role as session title
   3. subagent-cli check --session <id>           # verify state before every command!
   4. subagent-cli prompt --session <id> "task"   # send task, done returns output field
   5. subagent-cli approve --session <id>         # approve tool use, done returns output
@@ -95,12 +96,14 @@ program
   .option('-s, --subagent <name>', 'Subagent to use')
   .option('--cwd <dir>', 'Working directory (default: current dir)')
   .option('--session <id>', 'Session ID to reconnect or pre-assign')
+  .option('--role <text>', 'Role prompt (overrides config role, used as session title)')
   .option('--timeout <seconds>', 'Startup timeout in seconds (overrides config)')
   .action(async (opts) => {
     await output(await client().open({
       subagent: opts.subagent,
       cwd: opts.cwd,
       session: opts.session,
+      role: opts.role,
       timeout: opts.timeout ? Number(opts.timeout) : undefined,
     }))
   })

@@ -443,7 +443,7 @@ export abstract class SubagentCliAdapter extends EventEmitter {
     this.detectTimer = setInterval(async () => {
       if (!this.terminal) return
       await this.terminal.flush()
-      const screen = this.terminal.capture(this.terminal.totalLines)
+      const screen = this.terminal.capture()
       let result = this.detect(screen)
 
       // Probe residue cleanup: when state is RUNNING but screen shows "tab to queue"
@@ -455,7 +455,7 @@ export abstract class SubagentCliAdapter extends EventEmitter {
           this.terminal.write('\x15') // Ctrl+U: clear possible probe residue
           await this.wait(300)
           await this.terminal.flush()
-          result = this.detect(this.terminal.capture(this.terminal.totalLines))
+          result = this.detect(this.terminal.capture())
         }
       }
 

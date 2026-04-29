@@ -64,7 +64,7 @@ export class SubagentClient {
     return this.request('GET', `/sessions${qs ? `?${qs}` : ''}`)
   }
 
-  open(params: { subagent?: string; cwd?: string; session?: string; timeout?: number }) {
+  open(params: { subagent?: string; cwd?: string; session?: string; role?: string; timeout?: number }) {
     return this.request('POST', '/open', params)
   }
 

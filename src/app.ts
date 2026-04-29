@@ -214,9 +214,11 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
     const adapter = buildAdapter(subCfg.adapter)
     const cwd = (body.cwd as string | undefined) ?? process.cwd()
     if (!existsSync(cwd)) { fail(ctx, 400, 'INVALID_STATE', `Working directory does not exist: ${cwd}`); return }
+    const role = (body.role as string | undefined) ?? subCfg.role
     const params: OpenParams = {
       subagent: subagentName, adapter: subCfg.adapter,
       cwd, command: subCfg.command, args: subCfg.args, env: subCfg.env,
+      ...(role ? { role } : {}),
     }
     sessions.set(id, adapter)
     trackActivity(id, adapter)
@@ -291,13 +293,31 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
 
   // GET /api/session/:id/status
   router.get('/session/:id/status', (ctx) => {
-    const adapter = getAdapter(ctx); if (!adapter) return
+    const adapter = sessions.get(ctx.params.id)
+    if (!adapter) {
+      const cfgFile = join(sessionDir(ctx.params.id), 'config.json')
+      if (existsSync(cfgFile)) {
+        const saved = JSON.parse(readFileSync(cfgFile, 'utf-8'))
+        ok(ctx, { session: ctx.params.id, state: 'CLOSED', subagent: saved.subagent, cwd: saved.cwd, created_at: saved.created_at })
+        return
+      }
+      fail(ctx, 404, 'SESSION_NOT_FOUND', `Session ${ctx.params.id} does not exist`); return
+    }
     ok(ctx, { session: ctx.params.id, ...adapter.status() })
   })
 
   // GET /api/session/:id/check (screen-calibrated state, optional polling)
   router.get('/session/:id/check', async (ctx) => {
-    const adapter = getAdapter(ctx); if (!adapter) return
+    const adapter = sessions.get(ctx.params.id)
+    if (!adapter) {
+      const cfgFile = join(sessionDir(ctx.params.id), 'config.json')
+      if (existsSync(cfgFile)) {
+        const saved = JSON.parse(readFileSync(cfgFile, 'utf-8'))
+        ok(ctx, { session: ctx.params.id, state: 'CLOSED', subagent: saved.subagent, cwd: saved.cwd, created_at: saved.created_at })
+        return
+      }
+      fail(ctx, 404, 'SESSION_NOT_FOUND', `Session ${ctx.params.id} does not exist`); return
+    }
     const waitState = ctx.query.wait as string | undefined
     const timeout = Number(ctx.query.timeout ?? 0)
     const outputType = ctx.query.output as 'screen' | 'history' | 'last' | undefined

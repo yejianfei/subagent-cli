@@ -4,3 +4,4 @@ doc/
 .claude/
 .agents/
 *.x.bak
+tmp/

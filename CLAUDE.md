@@ -96,7 +96,7 @@ webpack.config.js            # webpack 配置 (双入口 + externals)
 |---|---|---|---|
 | GET | `/api/subagents` | 否 | 列出可用 subagent (name + description) |
 | GET | `/api/sessions` | 否 | 列出活跃 session，支持 `?cwd=` 过滤 |
-| POST | `/api/open` | **是** | 创建/重连 session，阻塞到 READY（cwd 必须存在） |
+| POST | `/api/open` | **是** | 创建/重连 session，阻塞到 READY。`role` 字段覆盖 config role（仅新建时生效，重连忽略） |
 | POST | `/api/session/:id/prompt` | **长轮询** | 发送任务 |
 | POST | `/api/session/:id/approve` | **长轮询** | 批准审批 (Enter)，可附带文字选择/修改 |
 | POST | `/api/session/:id/allow` | **长轮询** | 批准并允许本 session 同类操作 (Shift+Tab) |
