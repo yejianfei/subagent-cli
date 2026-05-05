@@ -178,7 +178,7 @@ export class GeminiCliAdapter extends SubagentCliAdapter {
       if (t === '' || /^[─╌▀▄▐▌█░▒▓╭╮╰╯│┃═━]{3,}$/.test(t)
           || chrome_words.some(w => t.toLowerCase().includes(w.toLowerCase()))
           || /^[│┃]/.test(t) || /[│┃]$/.test(t)
-          || /^workspace\s/.test(t) || /^[~\/]/.test(t)
+          || /^workspace\s/.test(t) || /^[~/]/.test(t)
           || /sandbox|no sandbox/i.test(t) || /Auto \(/.test(t)) {
         endIdx = i
       } else {
