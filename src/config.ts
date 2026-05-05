@@ -53,6 +53,14 @@ const DEFAULTS: Omit<AppConfig, 'home'> = {
       args: ['--ask-for-approval', 'untrusted', '-m', 'gpt-5.4'],
       env: {},
     },
+    gemini: {
+      adapter: 'gemini-cli',
+      description: 'Gemini CLI',
+      role: 'You are a helpful assistant.',
+      command: 'gemini',
+      args: [],
+      env: {},
+    },
   },
 }
 

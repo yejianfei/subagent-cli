@@ -1,6 +1,6 @@
 const { describe, it } = require('node:test')
 const assert = require('node:assert/strict')
-const { ClaudeCodeAdapter, CodexAdapter } = require('../dist/app')
+const { ClaudeCodeAdapter, CodexAdapter, GeminiCliAdapter } = require('../dist/app')
 
 // Access protected methods via thin test subclasses
 class TestableClaudeCode extends ClaudeCodeAdapter {
@@ -21,6 +21,23 @@ class TestableClaudeCode extends ClaudeCodeAdapter {
 }
 
 class TestableCodex extends CodexAdapter {
+  testGetDetectRules() {
+    return this.getAdapterDetectRules()
+  }
+  testGetLastOutput(rawText) {
+    return this.getLastOutput(rawText)
+  }
+  detectState(text) {
+    const rules = this.getAdapterDetectRules()
+    if (!rules.match_words.some(w => text.includes(w))) return null
+    if (rules.asking_words.some(w => text.includes(w))) return 'ASKING'
+    if (rules.running_words.some(w => text.includes(w))) return 'RUNNING'
+    if (rules.idle_words.some(w => text.includes(w))) return 'IDLE'
+    return null
+  }
+}
+
+class TestableGeminiCli extends GeminiCliAdapter {
   testGetDetectRules() {
     return this.getAdapterDetectRules()
   }
@@ -611,6 +628,260 @@ describe('CodexAdapter.getLastOutput()', () => {
     const result = a.testGetLastOutput(raw)
     // Should find › Create file as prompt, not › 1. Yes
     assert.ok(result.includes('• Creating file...'))
+  })
+
+})
+
+// ══════════════════════════════════════════════════════════════════
+// GeminiCliAdapter DetectRules validation
+// ══════════════════════════════════════════════════════════════════
+
+describe('GeminiCliAdapter.getAdapterDetectRules()', () => {
+
+  it('returns correct input keys', () => {
+    const a = new TestableGeminiCli()
+    const rules = a.testGetDetectRules()
+    assert.equal(rules.input_keys.approve, '\r')
+    assert.equal(rules.input_keys.allow, '\x1b[B\r')
+    assert.equal(rules.input_keys.reject, '\x1b')
+    assert.equal(rules.input_keys.amend, '')
+    assert.equal(rules.input_keys.cancel, '\x1b')
+    assert.equal(rules.input_keys.explain, '')
+    assert.equal(rules.input_keys.exit, '')
+  })
+
+  it('match_words contain expected keywords', () => {
+    const a = new TestableGeminiCli()
+    const rules = a.testGetDetectRules()
+    assert.ok(rules.match_words.includes('? for shortcuts'))
+    assert.ok(rules.match_words.includes('esc to cancel'))
+    assert.ok(rules.match_words.includes('Allow once'))
+  })
+
+  it('idle_words contain shortcuts and accept edits', () => {
+    const a = new TestableGeminiCli()
+    const rules = a.testGetDetectRules()
+    assert.ok(rules.idle_words.includes('? for shortcuts'))
+    assert.ok(rules.idle_words.includes('accept edits'))
+  })
+
+  it('asking_words contain Allow once and Apply this change', () => {
+    const a = new TestableGeminiCli()
+    const rules = a.testGetDetectRules()
+    assert.ok(rules.asking_words.includes('Allow once'))
+    assert.ok(rules.asking_words.includes('Apply this change'))
+  })
+
+  it('running_words contain esc to cancel', () => {
+    const a = new TestableGeminiCli()
+    const rules = a.testGetDetectRules()
+    assert.ok(rules.running_words.includes('esc to cancel'))
+  })
+
+  it('prompt_marker and chrome_words are configured', () => {
+    const a = new TestableGeminiCli()
+    const rules = a.testGetDetectRules()
+    assert.equal(rules.prompt_marker, '✦')
+    assert.ok(rules.chrome_words.length > 0)
+    assert.ok(rules.chrome_words.includes('? for shortcuts'))
+    assert.ok(rules.chrome_words.includes('Allow once'))
+  })
+
+})
+
+// ══════════════════════════════════════════════════════════════════
+// GeminiCli state detection (real screen samples from PTY test)
+// ══════════════════════════════════════════════════════════════════
+
+describe('GeminiCliAdapter detect() state detection', () => {
+
+  it('detects IDLE from real Gemini CLI idle screen', () => {
+    const a = new TestableGeminiCli()
+    const screen = [
+      '✦ Hello.',
+      '╭──────────────────────────────────────────────────────────────────╮',
+      '│ Gemini CLI update available! 0.38.2 → 0.40.0                        │',
+      '╰──────────────────────────────────────────────────────────────────╯',
+      '                                                       ? for shortcuts',
+      '────────────────────────────────────────────────────────────────────',
+      ' Shift+Tab to accept edits                    1 GEMINI.md file',
+      '▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+      ' >   Type your message or @path/to/file',
+    ].join('\n')
+    assert.equal(a.detectState(screen), 'IDLE')
+  })
+
+  it('detects RUNNING from Thinking indicator', () => {
+    const a = new TestableGeminiCli()
+    const screen = [
+      ' ⠹ Thinking... (esc to cancel, 3s)                     ? for shortcuts',
+      '────────────────────────────────────────────────────────────────────',
+      ' Shift+Tab to accept edits                    1 GEMINI.md file',
+      '▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+      ' >   Type your message or @path/to/file',
+    ].join('\n')
+    assert.equal(a.detectState(screen), 'RUNNING')
+  })
+
+  it('detects ASKING from approval dialog', () => {
+    const a = new TestableGeminiCli()
+    const screen = [
+      '│ ? WriteFile  Writing to hello.txt                                    │',
+      '│ ╭──────────────────────────────────────────────────────────────╮ │',
+      '│ │ 1 hello world                                                    │ │',
+      '│ ╰──────────────────────────────────────────────────────────────╯ │',
+      '│ Apply this change?                                                   │',
+      '│                                                                      │',
+      '│ ● 1. Allow once                                                      │',
+      '│   2. Allow for this session                                          │',
+      '│   3. Modify with external editor                                     │',
+      '│   4. No, suggest changes (esc)                                       │',
+      '╰──────────────────────────────────────────────────────────────────╯',
+    ].join('\n')
+    assert.equal(a.detectState(screen), 'ASKING')
+  })
+
+  it('returns null for text without match_words', () => {
+    const a = new TestableGeminiCli()
+    assert.equal(a.detectState('just some random text'), null)
+  })
+
+  it('running takes priority over idle (both present)', () => {
+    const a = new TestableGeminiCli()
+    const text = 'esc to cancel  ? for shortcuts  accept edits'
+    assert.equal(a.detectState(text), 'RUNNING')
+  })
+
+  it('asking takes priority over running (both present)', () => {
+    const a = new TestableGeminiCli()
+    const text = 'Allow once  esc to cancel  ? for shortcuts'
+    assert.equal(a.detectState(text), 'ASKING')
+  })
+
+  it('Apply this change also triggers ASKING', () => {
+    const a = new TestableGeminiCli()
+    const text = 'Apply this change?  ? for shortcuts'
+    assert.equal(a.detectState(text), 'ASKING')
+  })
+
+})
+
+// ══════════════════════════════════════════════════════════════════
+// GeminiCli keyword rules validation
+// ══════════════════════════════════════════════════════════════════
+
+describe('GeminiCli detection engine: keyword rules validation', () => {
+
+  it('idle_words and asking_words have no overlap', () => {
+    const a = new TestableGeminiCli()
+    const rules = a.testGetDetectRules()
+    for (const word of rules.idle_words) {
+      assert.ok(!rules.asking_words.includes(word), `"${word}" overlaps between idle and asking`)
+    }
+  })
+
+  it('running_words and asking_words have no overlap', () => {
+    const a = new TestableGeminiCli()
+    const rules = a.testGetDetectRules()
+    for (const word of rules.running_words) {
+      assert.ok(!rules.asking_words.includes(word), `"${word}" overlaps between running and asking`)
+    }
+  })
+
+  it('running_words and idle_words have no overlap', () => {
+    const a = new TestableGeminiCli()
+    const rules = a.testGetDetectRules()
+    for (const word of rules.running_words) {
+      assert.ok(!rules.idle_words.includes(word), `"${word}" overlaps between running and idle`)
+    }
+  })
+
+})
+
+// ══════════════════════════════════════════════════════════════════
+// getLastOutput — Gemini CLI (real screen samples from PTY test)
+// ══════════════════════════════════════════════════════════════════
+
+describe('GeminiCliAdapter.getLastOutput()', () => {
+
+  it('extracts pure text reply', () => {
+    const a = new TestableGeminiCli()
+    const raw = [
+      '> say hello in one word',
+      '✦ Hello.',
+      '',
+      '                                                       ? for shortcuts',
+      '────────────────────────────────────────────────────────────────────',
+      ' Shift+Tab to accept edits                    1 GEMINI.md file',
+      '▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+      ' >   Type your message or @path/to/file',
+      '▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+      ' workspace (/directory)',
+      ' ~                                                      Auto (Gemini 3)',
+    ].join('\n')
+    const result = a.testGetLastOutput(raw)
+    assert.ok(result.includes('Hello.'), `Expected Hello. in: ${result}`)
+    assert.ok(!result.includes('shortcuts'))
+    assert.ok(!result.includes('accept edits'))
+    assert.ok(!result.includes('Type your message'))
+    assert.ok(!result.includes('workspace'))
+  })
+
+  it('extracts tool use done reply', () => {
+    const a = new TestableGeminiCli()
+    const raw = [
+      '> create hello.txt with hello world',
+      '✦ I will create a file named hello.txt with the content "hello world".',
+      '',
+      '✦ Successfully created hello.txt with "hello world".',
+      '',
+      '                                                       ? for shortcuts',
+      '────────────────────────────────────────────────────────────────────',
+      ' Shift+Tab to accept edits                    1 GEMINI.md file',
+      '▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+      ' >   Type your message or @path/to/file',
+      '▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+      ' workspace (/directory)',
+    ].join('\n')
+    const result = a.testGetLastOutput(raw)
+    assert.ok(result.includes('Successfully created'))
+    assert.ok(!result.includes('shortcuts'))
+    assert.ok(!result.includes('workspace'))
+  })
+
+  it('trims Update available chrome', () => {
+    const a = new TestableGeminiCli()
+    const raw = [
+      '> say hello',
+      '✦ Hello.',
+      '╭──────────────────────────────────────────────────────────────────╮',
+      '│ Gemini CLI update available! 0.38.2 → 0.40.0                        │',
+      '│ Installed via Homebrew. Please update with "brew upgrade gemini-cli" │',
+      '╰──────────────────────────────────────────────────────────────────╯',
+      '                                                       ? for shortcuts',
+      ' Shift+Tab to accept edits',
+      '▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀',
+      ' >   Type your message or @path/to/file',
+      '▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄',
+    ].join('\n')
+    const result = a.testGetLastOutput(raw)
+    assert.ok(result.includes('Hello.'))
+    assert.ok(!result.includes('Update available'))
+    assert.ok(!result.includes('brew upgrade'))
+  })
+
+  it('handles screen without user prompt (scrolled off)', () => {
+    const a = new TestableGeminiCli()
+    const raw = [
+      '✦ Hello.',
+      '',
+      '                                                       ? for shortcuts',
+      '────────────────────────────────────────────────────────────────────',
+      ' Shift+Tab to accept edits',
+    ].join('\n')
+    const result = a.testGetLastOutput(raw)
+    assert.ok(result.includes('Hello.'))
+    assert.ok(!result.includes('shortcuts'))
   })
 
 })

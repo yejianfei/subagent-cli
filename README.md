@@ -1,6 +1,6 @@
 # subagent-cli
 
-Let your AI agent drive other AI agents. Control Claude Code, Codex and other coding terminals through a unified CLI — assign tasks, review approvals, collect results.
+Let your AI agent drive other AI agents. Control Claude Code, Codex, Gemini CLI and other coding terminals through a unified CLI — assign tasks, review approvals, collect results.
 
 ## Quick Start
 
@@ -151,10 +151,11 @@ Auto-fix mechanical issues and re-review in a loop until all issues are resolved
 
 ## Supported Terminals
 
-| Adapter       | Status | CLI Tool                                            |
-| ------------- | ------ | --------------------------------------------------- |
-| `claude-code` | ✅      | [Claude Code](https://claude.ai/code)               |
-| `codex`       | ✅      | [OpenAI Codex CLI](https://github.com/openai/codex) |
+| Adapter       | Status | CLI Tool                                              |
+| ------------- | ------ | ----------------------------------------------------- |
+| `claude-code` | ✅      | [Claude Code](https://claude.ai/code)                 |
+| `codex`       | ✅      | [OpenAI Codex CLI](https://github.com/openai/codex)   |
+| `gemini-cli`  | ✅      | [Gemini CLI](https://github.com/anthropics/gemini-cli) |
 
 ## CLI Reference
 
@@ -218,6 +219,14 @@ Config file: `~/.subagent-cli/config.json` (auto-created on first run)
       "role": "You are a helpful assistant.",
       "command": "codex",
       "args": ["--ask-for-approval", "untrusted", "-m", "gpt-5.4"],
+      "env": {}
+    },
+    "gemini": {
+      "adapter": "gemini-cli",
+      "description": "Gemini CLI",
+      "role": "You are a helpful assistant.",
+      "command": "gemini",
+      "args": [],
       "env": {}
     }
   }

@@ -474,7 +474,7 @@ export abstract class SubagentCliAdapter extends EventEmitter {
   }
 
   /** Stop detection polling. */
-  private stopDetection(): void {
+  protected stopDetection(): void {
     if (this.detectTimer) {
       clearInterval(this.detectTimer)
       this.detectTimer = null

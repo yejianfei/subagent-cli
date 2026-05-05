@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.1.15] - 2026-05-01
+
+### Added
+- **Gemini CLI adapter** (`gemini-cli`) — full support for Google Gemini CLI as a sub-agent
+  - TUI detection: `esc to cancel` (RUNNING), `Allow once` / `Apply this change` (ASKING), `? for shortcuts` (IDLE)
+  - Exit via Ctrl+D×2 (Gemini CLI has no /exit or /quit command)
+  - Session resume via `--resume <uuid>` parsed from exit output
+  - Trust dialog and MCP tool approval auto-handling during init
+  - Custom `getLastOutput` override: `✦` is AI response marker, `>` is user input marker
+  - No probe needed: `esc to cancel` persists during both Thinking and streaming phases
+- Default config includes `gemini` subagent entry (adapter: `gemini-cli`, command: `gemini`)
+- E2E test suite for Gemini CLI (`test/e2e-gemini.test.js`, 37 tests)
+- Detect test coverage for GeminiCliAdapter (12 tests)
+
+### Fixed
+- Session directory created before `adapter.open()` to prevent ENOENT when adapter writes history during init
+- `SubagentCliAdapter.stopDetection()` changed from private to protected for subclass exit override
+
 ## [0.1.14] - 2026-04-29
 
 ### Added
@@ -39,7 +57,7 @@
 
 ### Changed
 - README rewritten: user-facing Quick Start, Use Cases, Integrate with Your AI Agent (3 skill templates)
-- Removed all Gemini CLI references (not supported, no SDK planned)
+- Removed Gemini CLI placeholder references (native adapter added in v0.1.15)
 - CLI help text updated with `check --wait` and `delete --closed/--all` examples
 
 ## [0.1.10] - 2026-04-22

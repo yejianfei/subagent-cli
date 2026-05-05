@@ -4,7 +4,7 @@
 
 ## 项目定位
 
-Node.js + TypeScript CLI 工具，让 AI 通过 CLI 命令控制已有的编程终端（Claude Code、Codex 等），实现跨终端、跨模型的多 Agent 协作。MVP 版本采用终端控制（PTY + 屏幕解析）方式实现，支持进程隔离、两阶段审批、session 持久化。
+Node.js + TypeScript CLI 工具，让 AI 通过 CLI 命令控制已有的编程终端（Claude Code、Codex、Gemini CLI 等），实现跨终端、跨模型的多 Agent 协作。MVP 版本采用终端控制（PTY + 屏幕解析）方式实现，支持进程隔离、两阶段审批、session 持久化。
 
 ## 技术栈
 
@@ -47,12 +47,14 @@ src/
   types.ts                   # 统一类型
   adapters/claude_code.ts    # Claude Code adapter (detect + keyMap + session ID 获取)
   adapters/codex.ts          # Codex adapter (detect + keyMap + session ID 获取)
+  adapters/gemini_cli.ts     # Gemini CLI adapter (detect + Ctrl+D exit + MCP auto-approve)
 test/
   app.test.js                # App HTTP API 单元测试 (mock adapter)
   detect.test.js             # detect() 正则匹配测试
   screen.test.js             # PtyXterm 单元测试
   e2e.test.js                # Claude Code 端到端测试 (真实 CLI + subagent)
   e2e-codex.test.js          # Codex 端到端测试
+  e2e-gemini.test.js         # Gemini CLI 端到端测试
 dist/                        # webpack 产物
   cli.js                     # CLI 打包结果 (bin 入口)
   app.js                     # App 打包结果
@@ -212,11 +214,27 @@ AgentState = 'OPENING' | 'INITING' | 'IDLE' | 'PENDING' | 'RUNNING' | 'ASKING' |
 
 Codex 在流式输出时 `esc to interrupt` 消失，只剩 `% left`。`onRunning()` 进入 RUNNING 时发送空格（`probe: ' '`），触发 `tab to queue message` 指示器。cancel 时先 Ctrl+U 清空输入再发 Escape。对 Claude Code 无影响（不设 probe）。
 
+### GeminiCliAdapter 启动流程
+
+```
+spawn gemini → onInit 处理 Trust dialog / Update notice → IDLE
+→ 开启 autoApprove → 发送 role prompt → IDLE → 关闭 autoApprove
+→ Ctrl+U + Ctrl+D×2 → 进程退出
+→ 解析 session UUID → spawn gemini --resume <UUID> → IDLE
+```
+
+- 覆写 `onInit()`：轮询 `capture(totalLines)` 处理 Trust dialog（Enter 确认）、restart 等待
+- 覆写 `exit()`：Ctrl+U + Ctrl+D×2（Gemini CLI 不支持 /exit /quit）
+- 覆写 `getLastOutput()`：`✦` 是 AI 响应标记非用户输入标记，`>` 为用户输入标记
+- Init 阶段临时开启 `autoApprove`：Gemini CLI 加载 MCP 工具可能触发审批（如 Pencil MCP）
+- 不需要 probe：`esc to cancel` 在 Thinking 和流式输出期间始终存在（和 Claude Code 一致）
+- 不支持 amend 和 explain（`input_keys.amend` 和 `input_keys.explain` 为空字符串）
+
 ### Adapter 加载
 
-- 每个 adapter 文件（如 `claude_code.ts`、`codex.ts`）底部自注册：`registerAdapter('claude-code', ClaudeCodeAdapter)`
-- App 启动时 import `src/adapters/claude_code` + `src/adapters/codex`，自动完成注册
-- `config.json` 中 `subagents.<name>.adapter` 引用已注册的 adapter 名（`claude-code` 或 `codex`）
+- 每个 adapter 文件（如 `claude_code.ts`、`codex.ts`、`gemini_cli.ts`）底部自注册：`registerAdapter('claude-code', ClaudeCodeAdapter)`
+- App 启动时 import `src/adapters/claude_code` + `src/adapters/codex` + `src/adapters/gemini_cli`，自动完成注册
+- `config.json` 中 `subagents.<name>.adapter` 引用已注册的 adapter 名（`claude-code`、`codex` 或 `gemini-cli`）
 - App 在 `open` 时通过 `createAdapter(config.adapter)` 实例化
 
 ## 关键约定

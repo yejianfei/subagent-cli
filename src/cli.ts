@@ -8,7 +8,7 @@ declare const __VERSION__: string
 program
   .name('subagent-cli')
   .version(__VERSION__)
-  .description('Let your AI agent drive other AI agents (Claude Code, Codex, etc.)')
+  .description('Let your AI agent drive other AI agents (Claude Code, Codex, Gemini CLI)')
   .option('-c, --config <path>', 'Config file path (default: ~/.subagent-cli/config.json)')
   .hook('preAction', () => {
     const opts = program.opts<{ config?: string }>()

@@ -13,11 +13,13 @@ import type { OpenParams } from './types'
 // Load all adapters (self-register)
 import './adapters/claude_code'
 import './adapters/codex'
+import './adapters/gemini_cli'
 
 // Re-export internal modules for testing
 export { PtyXterm } from './pty_xterm'
 export { ClaudeCodeAdapter } from './adapters/claude_code'
 export { CodexAdapter } from './adapters/codex'
+export { GeminiCliAdapter } from './adapters/gemini_cli'
 // Augment Koa request with parsed body
 declare module 'koa' {
   interface Request {
@@ -222,6 +224,7 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
     }
     sessions.set(id, adapter)
     trackActivity(id, adapter)
+    mkdirSync(sessionDir(id), { recursive: true })
     try {
       console.error(`[open] calling adapter.open for ${id}`)
       await adapter.open(params, id, getHome(), timeout)
