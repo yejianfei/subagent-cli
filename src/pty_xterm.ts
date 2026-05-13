@@ -27,6 +27,11 @@ export class PtyXterm extends EventEmitter {
 
   // ── Process management ──
 
+  /** Whether the PTY process is currently running */
+  get alive(): boolean {
+    return this.proc !== undefined
+  }
+
   /** Spawn a PTY process (kills old process + clears screen → starts new process) */
   spawn(command: string, args: string[], opts: PtySpawnOptions): void {
     this.kill()

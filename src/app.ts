@@ -200,8 +200,14 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
       } catch (err) {
         sessions.delete(sessionId)
         lastActivity.delete(sessionId)
-        adapter.close()
+        await adapter.close()
         throw err
+      }
+      // Optional inline prompt
+      const inlinePrompt = body.prompt as string | undefined
+      if (inlinePrompt) {
+        const r = await adapter.prompt(inlinePrompt, timeout)
+        ok(ctx, { session: sessionId, ...r }); return
       }
       ok(ctx, { session: sessionId }); return
     }
@@ -232,11 +238,27 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
     } catch (err) {
       sessions.delete(id)
       lastActivity.delete(id)
-      adapter.close()
+      await adapter.close()
       throw err
     }
+    // Listen for unexpected exit: cleanup session from memory
+    adapter.once('unexpected-exit', () => {
+      console.error(`[unexpected-exit] session ${id} died unexpectedly`)
+      sessions.delete(id)
+      lastActivity.delete(id)
+      closeViewerSockets(id)
+      // Persist any session ID parsed from exit output
+      const sid = adapter.getSessionId()
+      if (sid) persistSession(id, params, sid)
+    })
     persistSession(id, params, adapter.getSessionId())
     console.error(`[open] persisted, sending ok for ${id}`)
+    // Optional inline prompt
+    const inlinePrompt = body.prompt as string | undefined
+    if (inlinePrompt) {
+      const r = await adapter.prompt(inlinePrompt, timeout)
+      ok(ctx, { session: id, ...r }); return
+    }
     ok(ctx, { session: id })
   })
 
@@ -363,13 +385,22 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
   router.post('/session/:id/exit', async (ctx) => {
     const adapter = getAdapter(ctx); if (!adapter) return
     await adapter.exit()
+    // Persist resume_id parsed from exit output (for future resume)
+    const resumeId = adapter.getSessionId()
+    if (resumeId) persistSession(ctx.params.id, adapter.getParams(), resumeId)
+    sessions.delete(ctx.params.id)
+    closeViewerSockets(ctx.params.id)
     ok(ctx, { session: ctx.params.id, status: 'exited' })
+    checkAutoExit()
   })
 
   // POST /api/session/:id/close (keep dir)
-  router.post('/session/:id/close', (ctx) => {
+  router.post('/session/:id/close', async (ctx) => {
     const adapter = getAdapter(ctx); if (!adapter) return
-    adapter.close()
+    await adapter.close()
+    // Persist resume_id if captured during graceful close
+    const resumeId = adapter.getSessionId()
+    if (resumeId) persistSession(ctx.params.id, adapter.getParams(), resumeId)
     sessions.delete(ctx.params.id)
     closeViewerSockets(ctx.params.id)
     ok(ctx, { session: ctx.params.id, status: 'closed' })
@@ -384,10 +415,10 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
   }
 
   // DELETE /api/session/:id (remove dir)
-  router.del('/session/:id', (ctx) => {
+  router.del('/session/:id', async (ctx) => {
     const id = ctx.params.id
     const adapter = sessions.get(id)
-    if (adapter) { adapter.close(); sessions.delete(id); closeViewerSockets(id) }
+    if (adapter) { await adapter.close(); sessions.delete(id); closeViewerSockets(id) }
     deleteSessionDir(id)
     ok(ctx, { session: id, status: 'deleted' })
     checkAutoExit()
@@ -405,9 +436,13 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
   })
 
   // DELETE /api/sessions/all (close active + delete all)
-  router.del('/sessions/all', (ctx) => {
+  router.del('/sessions/all', async (ctx) => {
     const deleted: string[] = []
-    sessions.forEach((adapter, id) => { adapter.close(); closeViewerSockets(id); deleted.push(id) })
+    await Promise.all(Array.from(sessions.entries()).map(async ([id, adapter]) => {
+      await adapter.close()
+      closeViewerSockets(id)
+      deleted.push(id)
+    }))
     sessions.clear()
     const sessDir = join(getHome(), 'sessions')
     existsSync(sessDir) && readdirSync(sessDir).forEach(id => {
@@ -419,8 +454,15 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
   })
 
   // POST /api/close (close all, keep dirs)
-  router.post('/close', (ctx) => {
-    const closed = Array.from(sessions.entries()).map(([id, adapter]) => { adapter.close(); closeViewerSockets(id); return id })
+  router.post('/close', async (ctx) => {
+    const closed: string[] = []
+    await Promise.all(Array.from(sessions.entries()).map(async ([id, adapter]) => {
+      await adapter.close()
+      const resumeId = adapter.getSessionId()
+      if (resumeId) persistSession(id, adapter.getParams(), resumeId)
+      closeViewerSockets(id)
+      closed.push(id)
+    }))
     sessions.clear()
     ok(ctx, { closed })
     checkAutoExit()
@@ -564,7 +606,10 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
       .filter(([id]) => (now - (lastActivity.get(id) ?? now)) > config.idle.timeout * 1000)
       .forEach(([id, adapter]) => {
         console.error(`Idle timeout: session ${id} (${Math.round((now - (lastActivity.get(id) ?? now)) / 1000)}s)`)
-        adapter.close()
+        adapter.close().then(() => {
+          const resumeId = adapter.getSessionId()
+          if (resumeId) persistSession(id, adapter.getParams(), resumeId)
+        }).catch(err => console.error(`[idle-close] ${id}:`, err))
         sessions.delete(id)
         lastActivity.delete(id)
       })
@@ -622,7 +667,8 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
   function stop(): void {
     clearInterval(idleTimer)
     if (autoExit.timer) clearTimeout(autoExit.timer)
-    sessions.forEach(adapter => adapter.close())
+    // Fire-and-forget close — synchronous stop path
+    sessions.forEach(adapter => { adapter.close().catch(() => {}) })
     sessions.clear()
     wss.close()
     httpServer.close()

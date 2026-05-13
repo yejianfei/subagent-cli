@@ -640,6 +640,35 @@ describe('E2E: Codex new features (v0.1.11)', { timeout: 600_000 }, () => {
     rmSync(roleDir, { recursive: true, force: true })
   })
 
+  it('㉜ open with inline prompt: one-shot open + prompt', async () => {
+    const inlineDir = mkdtempSync(join(tmpdir(), 'subagent-codex-inline-'))
+    const { json } = await cli(['open', '-s', 'codex', '--cwd', inlineDir, 'say hi in one word'], 300_000)
+    assert.equal(json.success, true, `Open with inline prompt failed: ${json.data?.error}`)
+    assert.ok(json.data.session)
+    assert.ok(json.data.status === 'done' || json.data.status === 'approval_needed')
+    console.log(`    Inline prompt result: ${json.data.status}`)
+
+    await cli(['close', '--session', json.data.session])
+    await cli(['delete', '--session', json.data.session])
+    rmSync(inlineDir, { recursive: true, force: true })
+  })
+
+  it('㉝ close captures resume_id in config.json', async () => {
+    const closeDir = mkdtempSync(join(tmpdir(), 'subagent-codex-close-rid-'))
+    const { json: openRes } = await cli(['open', '-s', 'codex', '--cwd', closeDir], 300_000)
+    assert.equal(openRes.success, true)
+    const sid = openRes.data.session
+
+    await cli(['close', '--session', sid])
+    const configPath = join(homedir(), '.subagent-cli', 'sessions', sid, 'config.json')
+    const cfg = JSON.parse(readFileSync(configPath, 'utf-8'))
+    assert.ok(cfg.resume_id, `Expected resume_id in config.json, got: ${JSON.stringify(cfg)}`)
+    console.log(`    close captured resume_id: ${cfg.resume_id.slice(0, 8)}...`)
+
+    await cli(['delete', '--session', sid])
+    rmSync(closeDir, { recursive: true, force: true })
+  })
+
   after(async () => {
     await cleanupSession(sessionId)
     rmSync(tmpDir, { recursive: true, force: true })

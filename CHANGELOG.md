@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.1.16] - 2026-05-13
+
+### Added
+- **`open [text]` inline prompt** — pass a prompt directly to `open` for one-shot create + prompt:
+  ```bash
+  subagent-cli open -s gemini --cwd /tmp "implement a REST API"
+  # Returns: { session, status: 'done'|'approval_needed', output, approval? }
+  ```
+- **Graceful close**: `close` now tries to send the adapter's exit command first (Claude `/exit`, Codex `/quit`, Gemini Ctrl+D×2), waits up to 10s, then SIGTERM, then SIGKILL — gives the CLI a chance to save session state
+- **`resume_id` captured at close/exit time** instead of during open — config.json populated when session terminates
+- **Unexpected exit detection**: PTY death (crash, external kill) auto-cleans session from memory map and emits `unexpected-exit` event
+
+### Changed
+- **Simplified `open` flow**: 5 phases (spawn → init prompt → /exit → parse UUID → respawn) reduced to 2 (spawn → init prompt). Sessions stay alive after open. ~4-5x faster on simple opens
+- **`close()` is now async** — callers must await it
+- **`SubagentCliAdapter.parseSessionId(output)` hook** — subclasses override to parse resume UUID from exit output
+- **`SubagentCliAdapter.getParams()` public** — for persistence updates after exit
+- **`PtyXterm.alive` getter** — check if process is running
+
+### Tests
+- 3 E2E suites: 138 tests total (Claude 59, Codex 40, Gemini 39), all passing
+- 114 unit tests (added 2 for inline prompt), all passing
+
 ## [0.1.15] - 2026-05-01
 
 ### Added

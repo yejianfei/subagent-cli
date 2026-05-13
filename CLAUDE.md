@@ -98,7 +98,7 @@ webpack.config.js            # webpack 配置 (双入口 + externals)
 |---|---|---|---|
 | GET | `/api/subagents` | 否 | 列出可用 subagent (name + description) |
 | GET | `/api/sessions` | 否 | 列出活跃 session，支持 `?cwd=` 过滤 |
-| POST | `/api/open` | **是** | 创建/重连 session，阻塞到 READY。`role` 字段覆盖 config role（仅新建时生效，重连忽略） |
+| POST | `/api/open` | **是** | 创建/重连 session，阻塞到 READY。`role` 覆盖 config role（仅新建生效）。可选 `prompt` 字段：open 后自动发送 prompt，返回 `{ session, status, output, approval? }` |
 | POST | `/api/session/:id/prompt` | **长轮询** | 发送任务 |
 | POST | `/api/session/:id/approve` | **长轮询** | 批准审批 (Enter)，可附带文字选择/修改 |
 | POST | `/api/session/:id/allow` | **长轮询** | 批准并允许本 session 同类操作 (Shift+Tab) |
@@ -106,7 +106,7 @@ webpack.config.js            # webpack 配置 (双入口 + externals)
 | GET | `/api/session/:id/status` | 否 | 查询内部状态（同步，快速） |
 | GET | `/api/session/:id/check` | 否 | 屏幕校准状态（async，flush+capture 底部 5 行 → detect）。`?wait=` 轮询目标状态，遇 ASKING 立即返回 409 |
 | GET | `/api/session/:id/output/:type` | 否 | 获取输出 (screen/history/last) |
-| POST | `/api/session/:id/close` | 否 | 关闭 session（保留 history） |
+| POST | `/api/session/:id/close` | 否 | 关闭 session（保留 history）。优雅退出：发退出指令 → 10s → SIGTERM → SIGKILL，期间解析 resume_id |
 | DELETE | `/api/session/:id` | 否 | 删除 session（彻底清除目录） |
 | POST | `/api/close` | 否 | 关闭全部 session（保留 history） |
 
@@ -137,9 +137,11 @@ HTTP API 响应不含定界符，直接返回 JSON。
 ### SubagentCliAdapter (基类)
 
 - 继承 `EventEmitter`，`this.emit('data', data)` 广播 pty 数据
-- 公开方法与 API 一对一：`open / prompt / approve / allow / reject / cancel / status / check / getOutput / close`
+- 公开方法与 API 一对一：`open / prompt / approve / allow / reject / cancel / status / check / getOutput / close / exit`
 - 所有阻塞方法（open/prompt/approve/reject/allow）接受 `timeout` 参数（秒），默认 0 = 不超时，由 CLI `--timeout` 或 HTTP API `timeout` 字段传入
-- `close()` 只管 pty 进程，调用 `removeAllListeners()`，不涉及磁盘
+- `close()` 异步：先发退出指令 → 10s 等待 → SIGTERM → SIGKILL，期间解析 resume UUID 写入 config.json
+- `exit()` 同 close 但要求 IDLE 状态，仅捕获 UUID 不强杀
+- **异常退出**：监听 `terminal.on('exit')`，非预期退出时清理状态并 emit `unexpected-exit`（app 层据此从 sessions map 删除）
 - **History 自主记录**: `open(params, session, home, timeout)` 传入目录后，自动追加 `history.md`
 - **`getPrompts()`**: 从 history.md 提取所有 prompt 文本，供 `GET /api/sessions` 返回
 - **Re-spawn 支持**: `terminal.spawn()` 内部 kill + `term.reset()` + 启动新进程，无需子类手动重置
@@ -167,22 +169,22 @@ HTTP API 响应不含定界符，直接返回 JSON。
 ### ClaudeCodeAdapter 启动流程
 
 ```
-spawn claude → IDLE → 发送 role prompt → IDLE → 发送 /exit → 进程退出
-→ 解析 session UUID → spawn claude --resume <UUID> → IDLE
+spawn claude → IDLE → 发送 role prompt → IDLE → 返回（不退出）
 ```
 
-- UUID 存储在 session config.json 的 `resumeId` 字段
-- 重连时 args 包含 `--resume`，跳过获取流程直接等待 IDLE
+- 会话保持活动，等用户后续 prompt
+- close/exit 时发 `/exit` → 解析 `--resume <UUID>` → 存入 config.json 的 `resume_id`
+- 重连：args 包含 `--resume`，跳过 init prompt 直接等待 IDLE
 - 不覆写 `onInit()`，使用默认实现（等定时器检测到 IDLE）
 
 ### CodexAdapter 启动流程
 
 ```
 spawn codex → onInit 处理启动对话框（Update/Trust/MCP boot）→ IDLE
-→ 发送 role prompt → IDLE → 发送 /quit → 进程退出
-→ 解析 session UUID → spawn codex resume <UUID> → IDLE
+→ 发送 role prompt → IDLE → 返回（不退出）
 ```
 
+- close/exit 时发 `/quit` → 解析 `codex resume <UUID>` → 存入 config.json
 - 覆写 `onInit()`: 轮询 `capture(totalLines)` 处理 Update prompt（↓+Enter 跳过）、Trust dialog（Enter 确认）、MCP boot（等待）
 - 覆写 `buildResumeArgs()`: `['resume', id, ...args]`（子命令格式，非 `--resume` 参数）
 - 不支持 amend 和 explain（`input_keys.amend` 和 `input_keys.explain` 为空字符串）
@@ -192,8 +194,9 @@ spawn codex → onInit 处理启动对话框（Update/Trust/MCP boot）→ IDLE
 ```
 AgentState = 'OPENING' | 'INITING' | 'IDLE' | 'PENDING' | 'RUNNING' | 'ASKING' | 'CLOSED'
 
-新建: OPENING → INITING → IDLE → (role → /exit → UUID) → INITING → IDLE
+新建: OPENING → INITING → IDLE → (role prompt → RUNNING → IDLE)
 重连: OPENING → INITING → IDLE
+close/exit: 发退出指令 → 解析 UUID 写入 resume_id → CLOSED
 交互: IDLE → prompt() → PENDING → RUNNING → ASKING | IDLE(done)
 审批: ASKING → approve()/allow() → PENDING → RUNNING → ASKING | IDLE(done)
 修改: ASKING → approve(text)/reject(text) → PENDING → RUNNING → ASKING | IDLE(done)
@@ -218,13 +221,12 @@ Codex 在流式输出时 `esc to interrupt` 消失，只剩 `% left`。`onRunnin
 
 ```
 spawn gemini → onInit 处理 Trust dialog / Update notice → IDLE
-→ 开启 autoApprove → 发送 role prompt → IDLE → 关闭 autoApprove
-→ Ctrl+U + Ctrl+D×2 → 进程退出
-→ 解析 session UUID → spawn gemini --resume <UUID> → IDLE
+→ 开启 autoApprove → 发送 role prompt → IDLE → 关闭 autoApprove → 返回（不退出）
 ```
 
+- close/exit 时 Ctrl+U + Ctrl+D×2 → 解析 `--resume <UUID>` → 存入 config.json
 - 覆写 `onInit()`：轮询 `capture(totalLines)` 处理 Trust dialog（Enter 确认）、restart 等待
-- 覆写 `exit()`：Ctrl+U + Ctrl+D×2（Gemini CLI 不支持 /exit /quit）
+- 覆写 `sendExitCommand()`：Ctrl+U + Ctrl+D×2（Gemini CLI 不支持 /exit /quit）
 - 覆写 `getLastOutput()`：`✦` 是 AI 响应标记非用户输入标记，`>` 为用户输入标记
 - Init 阶段临时开启 `autoApprove`：Gemini CLI 加载 MCP 工具可能触发审批（如 Pencil MCP）
 - 不需要 probe：`esc to cancel` 在 Thinking 和流式输出期间始终存在（和 Claude Code 一致）

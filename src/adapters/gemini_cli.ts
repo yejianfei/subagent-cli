@@ -7,12 +7,12 @@ const SESSION_ID_RE = /--resume\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 /**
  * GeminiCliAdapter — adapter for Gemini CLI (interactive TUI mode).
  *
- * Startup flow (session ID acquisition):
+ * Startup flow:
  *   1. Spawn `gemini` → onInit handles trust dialog + update notice → IDLE
- *   2. Send init prompt → wait for completion
- *   3. Send Ctrl+D×2 → wait for process exit
- *   4. Parse session UUID from exit output (e.g. "gemini --resume <uuid>")
- *   5. Re-spawn with `--resume <uuid>` → wait for IDLE
+ *   2. Send init prompt with role + notice (auto-approve MCP tools) → wait for IDLE
+ *   3. Return — session stays alive (no exit/respawn)
+ *
+ * Session ID is captured at exit() / close() time via parseSessionId().
  *
  * Detection:
  *   IDLE:    idle_words hit (? for shortcuts / accept edits) without asking/running
@@ -27,9 +27,6 @@ const SESSION_ID_RE = /--resume\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
  */
 export class GeminiCliAdapter extends SubagentCliAdapter {
   readonly name = 'gemini-cli'
-  private sessionId?: string
-
-  getSessionId(): string | undefined { return this.sessionId }
 
   /**
    * Custom init: poll screen to handle startup dialogs and wait for real IDLE.
@@ -67,15 +64,13 @@ export class GeminiCliAdapter extends SubagentCliAdapter {
       return super.open(params, session, home, timeout)
     }
 
-    const ms = timeout * 1000
-
     // Phase 1: spawn → onInit handles dialogs + boot → IDLE
     await super.open(params, session, home, timeout)
 
     // Phase 2: send init prompt to create session
     // Enable auto-approve: init may trigger MCP tool use (e.g. Pencil get_editor_state)
     this.setAutoApprove(true)
-    const initPrompt = `[subagent-cli] ${params.role ?? 'hi'}`
+    const initPrompt = this.buildInitPrompt(params.role)
     this.terminal.write(initPrompt, true)
     await this.wait(500)
     this.terminal.write('\r')
@@ -86,69 +81,22 @@ export class GeminiCliAdapter extends SubagentCliAdapter {
     }
     this.setAutoApprove(false)
 
-    // Phase 3: exit with Ctrl+U (clear input) + Ctrl+D×2
-    await this.wait(2000)
-    this.terminal.write('\x15')
-    await this.wait(300)
-    this.terminal.write('\x04')
-    await this.wait(300)
-    this.terminal.write('\x04')
-    const exitOutput = await new Promise<string>(resolve => {
-      this.terminal.once('exit', async () => {
-        await this.terminal.flush()
-        resolve(this.terminal.capture(1000))
-      })
-    })
-
-    // Phase 4: parse session index from exit output
-    const match = exitOutput.match(SESSION_ID_RE)
-    if (!match) {
-      // Fallback: re-spawn without --resume
-      this.terminal.spawn(params.command, params.args, {
-        cwd: params.cwd,
-        env: this.buildEnv(params.env),
-      })
-      this.state = 'INITING'
-      await this.onInit(ms)
-      return { session: session ?? '' }
-    }
-
-    this.sessionId = match[1]
-
-    // Phase 5: re-spawn with --resume <index>
-    this.terminal.spawn(
-      params.command,
-      this.buildResumeArgs(this.sessionId, params.args),
-      { cwd: params.cwd, env: this.buildEnv(params.env) },
-    )
-    this.state = 'INITING'
-    await this.onInit(ms)
     return { session: session ?? '' }
   }
 
+  protected parseSessionId(exitOutput: string): string | undefined {
+    return exitOutput.match(SESSION_ID_RE)?.[1]
+  }
+
   /**
-   * Override exit: Gemini CLI uses Ctrl+D×2 instead of /exit or /quit.
+   * Override: Gemini CLI exits via Ctrl+U + Ctrl+D×2 (no /exit or /quit command).
    */
-  async exit(timeout = 30): Promise<void> {
-    if (this.state !== 'IDLE') throw new Error('SESSION_BUSY')
-    const ms = timeout * 1000
-    const pending = new Promise<void>((resolve) => {
-      const timer = ms > 0
-        ? setTimeout(() => { this.terminal.kill(); resolve() }, ms)
-        : null
-      this.terminal.once('exit', () => {
-        if (timer) clearTimeout(timer)
-        resolve()
-      })
-    })
+  protected async sendExitCommand(_exitCmd: string): Promise<void> {
     this.terminal.write('\x15')
     await this.wait(300)
     this.terminal.write('\x04')
     await this.wait(300)
     this.terminal.write('\x04')
-    await pending
-    this.stopDetection()
-    this.state = 'CLOSED'
   }
 
   /**

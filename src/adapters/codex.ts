@@ -6,14 +6,13 @@ const SESSION_ID_RE = /codex resume\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a
 /**
  * CodexAdapter — adapter for OpenAI Codex CLI (interactive TUI mode).
  *
- * Startup flow (session ID acquisition):
+ * Startup flow:
  *   1. Spawn `codex` with user-configured args
  *   2. onInit: handle startup dialogs + wait for MCP boot → IDLE
- *   3. Send init prompt → wait for completion
- *   4. Send `/quit` → wait for process exit
- *   5. Parse session ID from exit output ("codex resume <uuid>")
- *   6. Re-spawn with `codex resume <uuid>` + original args → IDLE
- *   7. Return UUID as the subagent-cli session ID
+ *   3. Send init prompt with role + notice → wait for IDLE
+ *   4. Return — session stays alive (no exit/respawn)
+ *
+ * Session ID is captured at exit() / close() time via parseSessionId().
  *
  * Differences from Claude Code:
  *   - No amend/explain support
@@ -23,9 +22,6 @@ const SESSION_ID_RE = /codex resume\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a
  */
 export class CodexAdapter extends SubagentCliAdapter {
   readonly name = 'codex'
-  private sessionId?: string
-
-  getSessionId(): string | undefined { return this.sessionId }
 
   buildResumeArgs(resumeId: string, originalArgs: string[]): string[] {
     return ['resume', resumeId, ...originalArgs]
@@ -78,14 +74,11 @@ export class CodexAdapter extends SubagentCliAdapter {
       return super.open(params, session, home, timeout)
     }
 
-    // New session path
-    const ms = timeout * 1000
-
     // Phase 1: spawn → onInit handles dialogs + boot → IDLE
     await super.open(params, session, home, timeout)
 
     // Phase 2: send init prompt to create session
-    const initPrompt = `[subagent-cli] ${params.role ?? 'hi'}`
+    const initPrompt = this.buildInitPrompt(params.role)
     this.terminal.write(initPrompt, true)
     await this.wait(500)
     this.terminal.write('\r')
@@ -96,41 +89,11 @@ export class CodexAdapter extends SubagentCliAdapter {
       await this.wait(2000)
     }
 
-    // Phase 3: wait for TUI to settle, then send /quit
-    await this.wait(2000)
-    this.terminal.write('/quit', true)
-    await this.wait(500)
-    this.terminal.write('\r')
-    const exitOutput = await new Promise<string>(resolve => {
-      this.terminal.once('exit', async () => {
-        await this.terminal.flush()
-        resolve(this.terminal.capture(1000))
-      })
-    })
+    return { session: session ?? '' }
+  }
 
-    // Phase 4: parse session ID
-    const match = exitOutput.match(SESSION_ID_RE)
-    if (!match) {
-      this.terminal.spawn(params.command, params.args, {
-        cwd: params.cwd,
-        env: this.buildEnv(params.env),
-      })
-      this.state = 'INITING'
-      await this.onInit(ms)
-      return { session: session ?? '' }
-    }
-
-    this.sessionId = match[1]
-
-    // Phase 5: re-spawn with resume subcommand
-    this.terminal.spawn(
-      params.command,
-      this.buildResumeArgs(this.sessionId, params.args),
-      { cwd: params.cwd, env: this.buildEnv(params.env) },
-    )
-    this.state = 'INITING'
-    await this.onInit(ms)
-    return { session: this.sessionId }
+  protected parseSessionId(exitOutput: string): string | undefined {
+    return exitOutput.match(SESSION_ID_RE)?.[1]
   }
 
   protected async getQuestion(): Promise<ApprovalInfo> {

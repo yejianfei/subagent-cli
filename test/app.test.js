@@ -101,7 +101,8 @@ function createMockAdapter() {
       cwd: params.cwd,
       created_at: new Date().toISOString(),
     }),
-    close: () => { state = 'CLOSED' },
+    close: () => { state = 'CLOSED'; return Promise.resolve() },
+    getParams: () => params,
     autoApprove: false,
     setAutoApprove(v) { adapter.autoApprove = v },
     // Allow test to force state transitions
@@ -333,6 +334,30 @@ describe('App HTTP API', () => {
         .expect(200)
       const adp = ctx.sessions.get(res.body.data.session)
       assert.equal(adp._getParams().role, 'You are a helpful assistant.')
+      await agent.post(`/api/session/${res.body.data.session}/close`)
+    })
+
+    it('should send inline prompt when open with prompt field', async () => {
+      const res = await agent
+        .post('/api/open')
+        .send({ subagent: 'test-agent', cwd: VALID_CWD, prompt: 'hello inline' })
+        .set('Content-Type', 'application/json')
+        .expect(200)
+      assert.ok(res.body.data.session)
+      assert.equal(res.body.data.status, 'done')
+      assert.ok(res.body.data.output.includes('hello inline'))
+      await agent.post(`/api/session/${res.body.data.session}/close`)
+    })
+
+    it('should return session without prompt result when no prompt field', async () => {
+      const res = await agent
+        .post('/api/open')
+        .send({ subagent: 'test-agent', cwd: VALID_CWD })
+        .set('Content-Type', 'application/json')
+        .expect(200)
+      assert.ok(res.body.data.session)
+      assert.equal(res.body.data.status, undefined)
+      assert.equal(res.body.data.output, undefined)
       await agent.post(`/api/session/${res.body.data.session}/close`)
     })
 

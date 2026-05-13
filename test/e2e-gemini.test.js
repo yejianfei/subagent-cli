@@ -325,7 +325,8 @@ describe('E2E: Gemini single session', { timeout: 900_000 }, () => {
       'Create two separate files in the current directory:\n'
       + '1. test-emitter.js — unit tests with at least 15 test cases (must be over 80 lines)\n'
       + '2. bench-emitter.js — benchmarks with at least 10 benchmarks (must be over 80 lines)\n'
-      + 'You must create two separate files, do not merge them.')
+      + 'You must create two separate files, do not merge them.',
+      300_000)
     assert.equal(json.success, true)
     console.log(`    Status: ${json.data.status}`)
   })
@@ -363,7 +364,8 @@ describe('E2E: Gemini single session', { timeout: 900_000 }, () => {
   it('⑪ prompt: modify file → approval_needed', async () => {
     await assertCheck(sessionId, 'IDLE')
     const json = await sendPrompt(sessionId,
-      'Modify test-emitter.js in the current directory, add more edge case tests.')
+      'Modify test-emitter.js in the current directory, add more edge case tests.',
+      300_000)
     assert.equal(json.success, true)
     console.log(`    Status: ${json.data.status}`)
   })
@@ -623,6 +625,37 @@ describe('E2E: Gemini new features', { timeout: 600_000 }, () => {
     await cli(['delete', '--session', roleSid])
     cleanGeminiSessions(roleDir)
     rmSync(roleDir, { recursive: true, force: true })
+  })
+
+  it('㉛ open with inline prompt: one-shot open + prompt', async () => {
+    const inlineDir = mkdtempSync(join(tmpdir(), 'subagent-gemini-inline-'))
+    const { json } = await cli(['open', '-s', 'gemini', '--cwd', inlineDir, 'say hi in one word'], 300_000)
+    assert.equal(json.success, true, `Open with inline prompt failed: ${json.data?.error}`)
+    assert.ok(json.data.session)
+    assert.ok(json.data.status === 'done' || json.data.status === 'approval_needed')
+    console.log(`    Inline prompt result: ${json.data.status}`)
+
+    await cli(['close', '--session', json.data.session])
+    await cli(['delete', '--session', json.data.session])
+    cleanGeminiSessions(inlineDir)
+    rmSync(inlineDir, { recursive: true, force: true })
+  })
+
+  it('㉜ close captures resume_id in config.json', async () => {
+    const closeDir = mkdtempSync(join(tmpdir(), 'subagent-gemini-close-rid-'))
+    const { json: openRes } = await cli(['open', '-s', 'gemini', '--cwd', closeDir], 300_000)
+    assert.equal(openRes.success, true)
+    const sid = openRes.data.session
+
+    await cli(['close', '--session', sid])
+    const configPath = join(homedir(), '.subagent-cli', 'sessions', sid, 'config.json')
+    const cfg = JSON.parse(readFileSync(configPath, 'utf-8'))
+    assert.ok(cfg.resume_id, `Expected resume_id in config.json, got: ${JSON.stringify(cfg)}`)
+    console.log(`    close captured resume_id: ${cfg.resume_id.slice(0, 8)}...`)
+
+    await cli(['delete', '--session', sid])
+    cleanGeminiSessions(closeDir)
+    rmSync(closeDir, { recursive: true, force: true })
   })
 
   after(async () => {

@@ -44,8 +44,10 @@ export abstract class SubagentCliAdapter extends EventEmitter {
   protected state: AgentState = 'OPENING'
   protected params!: Readonly<OpenParams>
   protected createdAt = new Date()
+  protected sessionIdValue?: string
   private detectTimer: ReturnType<typeof setInterval> | null = null
   private autoApproveEnabled = false
+  private expectingExit = false
 
   abstract readonly name: string
 
@@ -54,8 +56,20 @@ export abstract class SubagentCliAdapter extends EventEmitter {
   protected abstract getAdapterDetectRules(): DetectRules
   protected abstract getQuestion(): Promise<ApprovalInfo>
 
-  /** Get the real session ID from the sub-agent (if available after open completes) */
-  getSessionId(): string | undefined { return undefined }
+  /** Get the real session ID from the sub-agent (populated after exit() parses it) */
+  getSessionId(): string | undefined { return this.sessionIdValue }
+
+  /** Get the open params for this session (for persistence updates) */
+  getParams(): OpenParams { return this.params }
+
+  /**
+   * Parse the sub-agent's session ID from exit output.
+   * Subclasses override with adapter-specific regex (e.g. UUID format).
+   * Returns undefined if parsing fails.
+   */
+  protected parseSessionId(_exitOutput: string): string | undefined {
+    return undefined
+  }
 
   /** Write data to PTY stdin (for interactive viewer input) */
   write(data: string): void { this.terminal?.write(data) }
@@ -167,6 +181,16 @@ export abstract class SubagentCliAdapter extends EventEmitter {
     return [...originalArgs, '--resume', resumeId]
   }
 
+  /**
+   * Build init prompt for new session creation.
+   * Appends a fixed English notice to prevent sub-agent from treating role as a task.
+   */
+  protected buildInitPrompt(role?: string): string {
+    const header = `[subagent-cli] ${role ?? 'hi'}`
+    const notice = 'You are running inside subagent-cli. Initializing session — reply briefly and wait for the user task.'
+    return `${header}\n\n${notice}`
+  }
+
   async open(params: OpenParams, session?: string, home?: string, timeout = 0): Promise<OpenResult> {
     this.params = Object.freeze({ ...params })
     const sid = session ?? ''
@@ -178,6 +202,17 @@ export abstract class SubagentCliAdapter extends EventEmitter {
     const env = this.buildEnv(params.env)
     this.terminal = new PtyXterm(cfg.terminal.cols, cfg.terminal.rows, cfg.terminal.scrollback)
     this.terminal.on('data', (chunk: string) => this.onChunk(chunk))
+    this.terminal.on('exit', () => {
+      if (this.expectingExit) return  // Normal exit/close path handles this
+      // Unexpected exit: try parse UUID for cleanup, mark closed, notify app
+      this.terminal.flush().then(() => {
+        const parsed = this.parseSessionId(this.terminal.capture(1000))
+        if (parsed) this.sessionIdValue = parsed
+        this.stopDetection()
+        this.state = 'CLOSED'
+        this.emit('unexpected-exit')
+      })
+    })
     this.startDetection()
 
     this.state = 'OPENING'
@@ -371,6 +406,7 @@ export abstract class SubagentCliAdapter extends EventEmitter {
 
   async exit(timeout = 30): Promise<void> {
     if (this.state !== 'IDLE') throw new Error('SESSION_BUSY')
+    this.expectingExit = true
     const ms = timeout * 1000
     const rules = this.getAdapterDetectRules()
     // Register listener BEFORE write to avoid race condition
@@ -383,14 +419,27 @@ export abstract class SubagentCliAdapter extends EventEmitter {
         resolve()
       })
     })
-    this.terminal.write('\x15') // Ctrl+U: clear input line
-    await this.wait(500)
-    this.terminal.write(`/${rules.input_keys.exit}`, true)
-    await this.wait(500)
-    this.terminal.write('\r')
+    this.sendExitCommand(rules.input_keys.exit)
     await pending
+    // Capture exit output and parse session ID
+    await this.terminal.flush()
+    const exitOutput = this.terminal.capture(1000)
+    const parsed = this.parseSessionId(exitOutput)
+    if (parsed) this.sessionIdValue = parsed
     this.stopDetection()
     this.state = 'CLOSED'
+  }
+
+  /**
+   * Send exit command to the sub-agent CLI. Default sends `/<cmd>` + Enter.
+   * Subclasses override for non-slash exit (e.g. Gemini's Ctrl+D×2).
+   */
+  protected async sendExitCommand(exitCmd: string): Promise<void> {
+    this.terminal.write('\x15') // Ctrl+U: clear input line
+    await this.wait(500)
+    this.terminal.write(`/${exitCmd}`, true)
+    await this.wait(500)
+    this.terminal.write('\r')
   }
 
   /** Screen-calibrated state check (authoritative, async — flush + capture bottom lines → detect) */
@@ -410,7 +459,42 @@ export abstract class SubagentCliAdapter extends EventEmitter {
     }
   }
 
-  close(): void {
+  /**
+   * Close the session. Tries graceful exit first (send exit command, wait up to 3s,
+   * then SIGTERM, then SIGKILL). Parses session ID from exit output if successful.
+   */
+  async close(): Promise<void> {
+    if (this.state === 'CLOSED') {
+      this.removeAllListeners()
+      return
+    }
+    this.expectingExit = true
+    if (this.terminal?.alive) {
+      const rules = this.getAdapterDetectRules()
+      const gracefulExit = new Promise<boolean>((resolve) => {
+        const timer = setTimeout(() => resolve(false), 10_000)
+        this.terminal.once('exit', () => { clearTimeout(timer); resolve(true) })
+      })
+      try {
+        await this.sendExitCommand(rules.input_keys.exit)
+      } catch {
+        // Send may fail if process already dying — fall through to kill
+      }
+      const exited = await gracefulExit
+      if (!exited) {
+        // SIGTERM, wait up to 1s, then SIGKILL via dispose
+        this.terminal.exit()
+        await new Promise<void>((resolve) => {
+          const t = setTimeout(resolve, 1000)
+          this.terminal.once('exit', () => { clearTimeout(t); resolve() })
+        })
+      }
+      // Try to capture session ID even on close
+      await this.terminal.flush()
+      const exitOutput = this.terminal.capture(1000)
+      const parsed = this.parseSessionId(exitOutput)
+      if (parsed) this.sessionIdValue = parsed
+    }
     this.stopDetection()
     this.terminal?.dispose()
     this.state = 'CLOSED'

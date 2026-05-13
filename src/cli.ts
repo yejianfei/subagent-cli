@@ -19,6 +19,7 @@ Workflow:
   1. subagent-cli subagents                      # list available subagents
   2. subagent-cli open -s haiku --cwd .             # start session, returns session ID
      subagent-cli open -s haiku --cwd . --role "Java expert"  # custom role as session title
+     subagent-cli open -s haiku --cwd . "do the task"        # open + send first prompt
   3. subagent-cli check --session <id>           # verify state before every command!
   4. subagent-cli prompt --session <id> "task"   # send task, done returns output field
   5. subagent-cli approve --session <id>         # approve tool use, done returns output
@@ -26,7 +27,8 @@ Workflow:
      subagent-cli reject --session <id> "reason" # reject with instruction (Escape + text)
      subagent-cli allow --session <id>           # approve + don't ask again for similar ops
   6. subagent-cli output --session <id> --type last  # get last reply (TUI chrome stripped)
-  7. subagent-cli close --session <id>           # stop session (history kept)
+  7. subagent-cli exit --session <id>            # graceful exit (captures resume_id)
+     subagent-cli close --session <id>           # stop session (history kept, resume_id captured)
 
 Important: Always run "check" before prompt/approve/reject/allow.
   Internal state may drift from actual terminal state. "check" reads
@@ -91,19 +93,20 @@ program
   })
 
 program
-  .command('open')
-  .description('Open a new session or reconnect to an existing one')
+  .command('open [text]')
+  .description('Open a new session or reconnect. Optional [text] sends a prompt after open')
   .option('-s, --subagent <name>', 'Subagent to use')
   .option('--cwd <dir>', 'Working directory (default: current dir)')
   .option('--session <id>', 'Session ID to reconnect or pre-assign')
   .option('--role <text>', 'Role prompt (overrides config role, used as session title)')
   .option('--timeout <seconds>', 'Startup timeout in seconds (overrides config)')
-  .action(async (opts) => {
+  .action(async (text, opts) => {
     await output(await client().open({
       subagent: opts.subagent,
       cwd: opts.cwd,
       session: opts.session,
       role: opts.role,
+      prompt: text,
       timeout: opts.timeout ? Number(opts.timeout) : undefined,
     }))
   })
