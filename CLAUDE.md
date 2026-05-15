@@ -68,7 +68,7 @@ webpack.config.js            # webpack 配置 (双入口 + externals)
 ```json
 {
   "port": 7100,
-  "idle": { "timeout": 300, "check_interval": 30, "manager_timeout": 120 },
+  "idle": { "timeout": 300, "check_interval": 30, "manager_timeout": 120, "reuse_ratio": 0.5, "fast_reuse": false },
   "terminal": { "cols": 220, "rows": 50, "scrollback": 5000 },
   "subagents": {
     "haiku": {
@@ -98,7 +98,7 @@ webpack.config.js            # webpack 配置 (双入口 + externals)
 |---|---|---|---|
 | GET | `/api/subagents` | 否 | 列出可用 subagent (name + description) |
 | GET | `/api/sessions` | 否 | 列出活跃 session，支持 `?cwd=` 过滤 |
-| POST | `/api/open` | **是** | 创建/重连 session，阻塞到 READY。`role` 覆盖 config role（仅新建生效）。可选 `prompt` 字段：open 后自动发送 prompt，返回 `{ session, status, output, approval? }` |
+| POST | `/api/open` | **是** | 创建/重连 session，阻塞到 READY。`role` 覆盖 config role（仅新建生效）。可选 `prompt`：open 后自动发送 prompt，返回 `{ session, status, output, approval? }`。可选 `reuse`：true 时优先复用同 cwd+subagent 的活跃 IDLE（受 `idle.reuse_ratio` 冷却限制）或磁盘 CLOSED session，命中返回 `{ session, reused: true, ... }`。`config.idle.fast_reuse=true` 使 `reuse` 默认为 true。可选 `exclude_session`：reuse 时排除该 session（递归保护，client 自动从 `SUBAGENT_CLI_SESSION` env 注入） |
 | POST | `/api/session/:id/prompt` | **长轮询** | 发送任务 |
 | POST | `/api/session/:id/approve` | **长轮询** | 批准审批 (Enter)，可附带文字选择/修改 |
 | POST | `/api/session/:id/allow` | **长轮询** | 批准并允许本 session 同类操作 (Shift+Tab) |
@@ -109,6 +109,7 @@ webpack.config.js            # webpack 配置 (双入口 + externals)
 | POST | `/api/session/:id/close` | 否 | 关闭 session（保留 history）。优雅退出：发退出指令 → 10s → SIGTERM → SIGKILL，期间解析 resume_id |
 | DELETE | `/api/session/:id` | 否 | 删除 session（彻底清除目录） |
 | POST | `/api/close` | 否 | 关闭全部 session（保留 history） |
+| POST | `/api/shutdown` | 否 | **仅 loopback** 可达。优雅关闭 daemon（关 sessions / wss / httpServer → 清 pid 文件 → exit 0） |
 
 **统一响应**: CLI stdout 输出 JSON 前后包裹定界符 `=====SUBAGENT_JSON=====`，便于从大输出中可靠提取：
 ```
@@ -120,7 +121,26 @@ HTTP API 响应不含定界符，直接返回 JSON。
 
 **prompt/approve/reject/allow 完成时**，`data.output` 包含提取后的子 agent 回复（去除 TUI chrome），主 agent 无需额外调用 `output --type last`。
 
-**错误码**: `SESSION_NOT_FOUND` (404), `SESSION_BUSY` (409), `SESSION_NOT_READY` (503), `INVALID_STATE` (400), `TIMEOUT` (408), `SUBAGENT_NOT_FOUND` (400)
+**错误码**: `SESSION_NOT_FOUND` (404), `SESSION_BUSY` (409), `SESSION_NOT_READY` (503), `INVALID_STATE` (400), `TIMEOUT` (408), `SUBAGENT_NOT_FOUND` (400), `RECURSIVE_SELF_REFERENCE` (400, client 层拦截：递归调用 subagent-cli 操控自身 session)
+
+**open 优先级**（从高到低）：
+1. `--session <id>` 存在 → 复用该 session
+2. 无 `--session`，有 `--reuse` → 按 cwd + subagent 复用
+3. 无 `--session`/`--reuse`，`fast_reuse=true` → 按 cwd + subagent 复用
+4. 其他 → 创建新 session
+
+Reuse 候选挑选（步骤 2/3 命中时）：活跃 IDLE（最早 lastActivity，过 cooldown）> 磁盘 CLOSED with resume_id（最新 created_at）> 退回创建新
+
+**递归保护**：daemon 给每个 session 的 PTY 注入 `SUBAGENT_CLI_SESSION=<id>`；client 检测此 env，open 时自动加 `exclude_session` 排除自己，且所有 `--session <self-id>` 命令同步返回 `RECURSIVE_SELF_REFERENCE`，防止子 agent 自循环
+
+## Daemon 生命周期
+
+- **单实例约束**：全局只能有一个 daemon。`subagent-cli daemon start` 先读 `~/.subagent-cli/daemon.pid`，若 pid 存活则拒绝启动（`already_running`），即使 `--port` 不同也拒绝
+- **PID 文件**：`~/.subagent-cli/daemon.pid` 纯文本 `<pid>,<port>`。app 启动写入，shutdown / idle-timeout 退出时清除
+- **`subagent-cli daemon` 命令**（start/stop/status，可选 `--port`）— 由 cli.ts 直接调 daemon_lifecycle，不经 SubagentClient（避免与 auto-fork 冲突）
+- **动态端口**：`SubagentClient` 先读 daemon.pid。若已有存活 daemon 在非默认端口（如 `daemon start --port 7200`）→ client 自动连那个端口。无 pid 文件或进程已死 → 按 `config.port` fork 新 daemon
+- **`SUBAGENT_PORT` 环境变量**：`forkDaemonAndWait(port)` 通过该变量告知 app 绑定哪个端口（不依赖 config.json）
+- **共享模块 `src/daemon_lifecycle.ts`**：`probePort` / `forkDaemonAndWait` / `isProcessAlive` / `readDaemonInfo` / `writeDaemonInfo` / `clearDaemonInfo`。被 client.ts / cli.ts / app.ts 共用
 
 ## 核心模式
 

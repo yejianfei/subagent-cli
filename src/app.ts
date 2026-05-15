@@ -5,9 +5,10 @@ import { WebSocketServer, WebSocket } from 'ws'
 import { readFileSync, writeFileSync, rmSync, readdirSync, existsSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { randomBytes } from 'crypto'
-import { loadConfig, ensureDirs, getHome, type AppConfig } from './config'
+import { loadConfig, ensureDirs, getHome, applyHome, type AppConfig } from './config'
 import { createAdapter, SubagentCliAdapter } from './adapter'
 import { PtyXterm } from './pty_xterm'
+import { writeDaemonInfo, clearDaemonInfo } from './daemon_lifecycle'
 import type { OpenParams } from './types'
 
 // Load all adapters (self-register)
@@ -20,6 +21,7 @@ export { PtyXterm } from './pty_xterm'
 export { ClaudeCodeAdapter } from './adapters/claude_code'
 export { CodexAdapter } from './adapters/codex'
 export { GeminiCliAdapter } from './adapters/gemini_cli'
+export { SubagentClient } from './client'
 // Augment Koa request with parsed body
 declare module 'koa' {
   interface Request {
@@ -30,6 +32,8 @@ declare module 'koa' {
 export interface AppOptions {
   config?: AppConfig
   adapterFactory?: (adapterName: string) => SubagentCliAdapter
+  /** Process exit hook (default: process.exit). Overridable for tests. */
+  onExit?: (code: number) => void
 }
 
 export interface AppContext {
@@ -44,7 +48,11 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
   // Support both app(config) and app({ config, adapterFactory }) for backward compat
   const isOptions = opts && 'adapterFactory' in opts
   const config = (isOptions ? (opts as AppOptions).config : opts as AppConfig) ?? loadConfig()
+  // SUBAGENT_PORT (set by forkDaemonAndWait) overrides config so `daemon start --port` binds correctly
+  if (process.env.SUBAGENT_PORT) config.port = Number(process.env.SUBAGENT_PORT)
+  applyHome(config.home)
   const buildAdapter = (isOptions ? (opts as AppOptions).adapterFactory : undefined) ?? createAdapter
+  const onExit = (isOptions ? (opts as AppOptions).onExit : undefined) ?? ((code: number) => process.exit(code))
   ensureDirs()
 
   // ── Session Registry ──
@@ -81,6 +89,102 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
   function deleteSessionDir(id: string): void {
     const dir = sessionDir(id)
     if (existsSync(dir)) rmSync(dir, { recursive: true, force: true })
+  }
+
+  /**
+   * Try to reuse an existing session matching cwd + subagent + adapter.
+   *
+   * Priority:
+   *   1. Active IDLE session, cooled down (idle for >= timeout * reuse_ratio)
+   *      → pick oldest lastActivity (least likely to be in use by another caller)
+   *   2. Disk CLOSED session with resume_id → resume the newest one
+   *   3. None → null (caller should create new)
+   */
+  async function tryReuseSession(
+    cwd: string,
+    subagentName: string,
+    adapterName: string,
+    timeout: number,
+    inlinePrompt?: string,
+    excludeSession?: string,
+  ): Promise<Record<string, unknown> | null> {
+    const ratio = config.idle.reuse_ratio ?? 0.5
+    const minIdleMs = config.idle.timeout * 1000 * ratio
+    const now = Date.now()
+
+    // ① Active IDLE candidates, cooled down, oldest lastActivity first
+    // excludeSession filter prevents recursive subagent-cli calls from reusing their own parent session
+    const activeCandidates = Array.from(sessions.entries())
+      .filter(([id, a]) => {
+        if (excludeSession && id === excludeSession) return false
+        const s = a.status()
+        const p = a.getParams()
+        const idleAge = now - (lastActivity.get(id) ?? now)
+        return s.cwd === cwd
+          && s.subagent === subagentName
+          && p.adapter === adapterName
+          && s.state === 'IDLE'
+          && idleAge >= minIdleMs
+      })
+      .sort(([a], [b]) => (lastActivity.get(a) ?? 0) - (lastActivity.get(b) ?? 0))
+
+    if (activeCandidates.length > 0) {
+      const [id, adapter] = activeCandidates[0]
+      trackActivity(id, adapter)
+      if (inlinePrompt) {
+        const r = await adapter.prompt(inlinePrompt, timeout)
+        return { session: id, reused: true, ...r }
+      }
+      return { session: id, reused: true }
+    }
+
+    // ② Disk CLOSED candidates with resume_id, newest first
+    const sessDir = join(getHome(), 'sessions')
+    if (!existsSync(sessDir)) return null
+    const diskCandidates = readdirSync(sessDir)
+      .filter(id => !sessions.has(id))
+      .filter(id => !excludeSession || id !== excludeSession)
+      .map(id => {
+        const cfgFile = join(sessDir, id, 'config.json')
+        if (!existsSync(cfgFile)) return null
+        try {
+          const saved = JSON.parse(readFileSync(cfgFile, 'utf-8'))
+          if (saved.cwd !== cwd || saved.subagent !== subagentName
+              || saved.adapter !== adapterName || !saved.resume_id) return null
+          return { id, saved }
+        } catch { return null }
+      })
+      .filter((x): x is { id: string; saved: Record<string, unknown> } => x !== null)
+      .sort((a, b) => String(b.saved.created_at).localeCompare(String(a.saved.created_at)))
+
+    if (diskCandidates.length === 0) return null
+
+    // Resume the newest disk session
+    const { id, saved } = diskCandidates[0]
+    const adapter = buildAdapter(adapterName)
+    const args = adapter.buildResumeArgs(saved.resume_id as string, saved.args as string[])
+    // Override SUBAGENT_CLI_SESSION env so the resumed session knows its own id (prevents self-reuse on recursive call)
+    const env = { ...(saved.env as Record<string, string>), SUBAGENT_CLI_SESSION: id }
+    const params: OpenParams = {
+      subagent: saved.subagent as string, adapter: adapterName,
+      cwd: saved.cwd as string, command: saved.command as string,
+      args, env,
+    }
+    sessions.set(id, adapter)
+    trackActivity(id, adapter)
+    try {
+      await adapter.open(params, id, getHome(), timeout)
+    } catch (err) {
+      sessions.delete(id)
+      lastActivity.delete(id)
+      await adapter.close()
+      throw err
+    }
+    if (inlinePrompt) {
+      const r = await adapter.prompt(inlinePrompt, timeout)
+      return { session: id, reused: true, ...r }
+    }
+    return { session: id, reused: true }
   }
 
   // ── Startup Recovery ──
@@ -188,9 +292,11 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
       const adapter = buildAdapter(subCfg.adapter)
       const resumeId = saved.resume_id as string | undefined
       const args = resumeId ? adapter.buildResumeArgs(resumeId, subCfg.args) : subCfg.args
+      // Inject SUBAGENT_CLI_SESSION so recursive subagent-cli calls inside this session can self-exclude
+      const env = { ...subCfg.env, SUBAGENT_CLI_SESSION: sessionId }
       const params: OpenParams = {
         subagent: saved.subagent, adapter: subCfg.adapter,
-        cwd: saved.cwd, command: subCfg.command, args, env: subCfg.env,
+        cwd: saved.cwd, command: subCfg.command, args, env,
       }
       if (!existsSync(params.cwd)) { fail(ctx, 400, 'INVALID_STATE', `Working directory does not exist: ${params.cwd}`); return }
       sessions.set(sessionId, adapter)
@@ -218,14 +324,25 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
     const subCfg = config.subagents[subagentName]
     if (!subCfg) { fail(ctx, 400, 'SUBAGENT_NOT_FOUND', `Unknown subagent: ${subagentName}`); return }
 
-    const id = (sessionId ?? generateId()) as string
-    const adapter = buildAdapter(subCfg.adapter)
     const cwd = (body.cwd as string | undefined) ?? process.cwd()
     if (!existsSync(cwd)) { fail(ctx, 400, 'INVALID_STATE', `Working directory does not exist: ${cwd}`); return }
+
+    // ── Reuse logic ──
+    const excludeSession = body.exclude_session as string | undefined
+    const reuseEnabled = (body.reuse as boolean | undefined) ?? config.idle.fast_reuse ?? false
+    if (reuseEnabled) {
+      const reused = await tryReuseSession(cwd, subagentName, subCfg.adapter, timeout, body.prompt as string | undefined, excludeSession)
+      if (reused) { ok(ctx, reused); return }
+    }
+
+    const id = (sessionId ?? generateId()) as string
+    const adapter = buildAdapter(subCfg.adapter)
     const role = (body.role as string | undefined) ?? subCfg.role
+    // Inject SUBAGENT_CLI_SESSION so recursive subagent-cli calls inside this session can self-exclude
+    const env = { ...subCfg.env, SUBAGENT_CLI_SESSION: id }
     const params: OpenParams = {
       subagent: subagentName, adapter: subCfg.adapter,
-      cwd, command: subCfg.command, args: subCfg.args, env: subCfg.env,
+      cwd, command: subCfg.command, args: subCfg.args, env,
       ...(role ? { role } : {}),
     }
     sessions.set(id, adapter)
@@ -468,6 +585,25 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
     checkAutoExit()
   })
 
+  // POST /api/shutdown (loopback only) — graceful daemon stop
+  router.post('/shutdown', (ctx) => {
+    const ip = ctx.request.ip
+    const loopback = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1' || ip === ''
+    if (!loopback) { fail(ctx, 403, 'FORBIDDEN', 'shutdown only allowed from loopback'); return }
+    ok(ctx, { status: 'shutting_down' })
+    // Defer so the HTTP response flushes before the process tears down
+    setTimeout(() => {
+      clearInterval(idleTimer)
+      if (autoExit.timer) clearTimeout(autoExit.timer)
+      sessions.forEach(adapter => { adapter.close().catch(() => {}) })
+      sessions.clear()
+      wss.close()
+      httpServer.close()
+      clearDaemonInfo()
+      onExit(0)
+    }, 50)
+  })
+
   koaApp.use(router.routes()).use(router.allowedMethods())
 
   // ── Debug Viewer ──
@@ -633,7 +769,8 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
       console.error(`No sessions for ${MANAGER_IDLE / 1000}s. Manager exiting.`)
       clearInterval(idleTimer)
       httpServer.close()
-      process.exit(0)
+      clearDaemonInfo()
+      onExit(0)
     }, MANAGER_IDLE)
   }
 
@@ -659,6 +796,7 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
   async function start(): Promise<void> {
     await preflight()
     httpServer.listen(config.port, () => {
+      writeDaemonInfo(process.pid, config.port)
       console.error(`App listening on http://localhost:${config.port}`)
       console.error(`Debug viewer: http://localhost:${config.port}/viewer`)
     })

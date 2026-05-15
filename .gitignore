@@ -5,3 +5,4 @@ doc/
 .agents/
 *.x.bak
 tmp/
+AGENTS.md

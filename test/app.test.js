@@ -14,7 +14,7 @@ const VALID_CWD = join(tmpdir(), `subagent-test-cwd-${Date.now()}`)
 const testConfig = {
   home: TEST_HOME,
   port: 0,
-  idle: { timeout: 999999, check_interval: 999999, manager_timeout: -1 },
+  idle: { timeout: 999999, check_interval: 999999, manager_timeout: -1, reuse_ratio: 0, fast_reuse: false },
   terminal: { cols: 120, rows: 50, scrollback: 5000 },
   subagents: {
     'test-agent': {
@@ -361,6 +361,118 @@ describe('App HTTP API', () => {
       await agent.post(`/api/session/${res.body.data.session}/close`)
     })
 
+    it('should reuse active IDLE session when --reuse passed (reuse_ratio=0)', async () => {
+      // Park any pre-existing sessions in non-IDLE state so they aren't reuse candidates
+      ctx.sessions.forEach(a => a._setState('RUNNING'))
+      const r1 = await agent
+        .post('/api/open')
+        .send({ subagent: 'test-agent', cwd: VALID_CWD })
+        .set('Content-Type', 'application/json')
+        .expect(200)
+      const firstId = r1.body.data.session
+      const adp = ctx.sessions.get(firstId)
+      adp._setState('IDLE')
+
+      // Second open with --reuse: should return firstId (only IDLE candidate)
+      const r2 = await agent
+        .post('/api/open')
+        .send({ subagent: 'test-agent', cwd: VALID_CWD, reuse: true })
+        .set('Content-Type', 'application/json')
+        .expect(200)
+      assert.equal(r2.body.data.session, firstId, 'Should reuse first session')
+      assert.equal(r2.body.data.reused, true)
+      // Restore others to IDLE for follow-up tests
+      ctx.sessions.forEach(a => a._setState('IDLE'))
+      await agent.post(`/api/session/${firstId}/close`)
+    })
+
+    it('should not reuse when --reuse=false explicitly even if fast_reuse=true', async () => {
+      // Open with reuse=false should always create new
+      const r1 = await agent
+        .post('/api/open')
+        .send({ subagent: 'test-agent', cwd: VALID_CWD })
+        .set('Content-Type', 'application/json')
+        .expect(200)
+      const firstId = r1.body.data.session
+      const adp = ctx.sessions.get(firstId)
+      adp._setState('IDLE')
+
+      const r2 = await agent
+        .post('/api/open')
+        .send({ subagent: 'test-agent', cwd: VALID_CWD, reuse: false })
+        .set('Content-Type', 'application/json')
+        .expect(200)
+      assert.notEqual(r2.body.data.session, firstId, 'Should create new session')
+      assert.notEqual(r2.body.data.reused, true)
+      await agent.post(`/api/session/${firstId}/close`)
+      await agent.post(`/api/session/${r2.body.data.session}/close`)
+    })
+
+    it('should not reuse session with different cwd', async () => {
+      const r1 = await agent
+        .post('/api/open')
+        .send({ subagent: 'test-agent', cwd: VALID_CWD })
+        .set('Content-Type', 'application/json')
+        .expect(200)
+      ctx.sessions.get(r1.body.data.session)._setState('IDLE')
+
+      // Different cwd → don't reuse
+      const otherCwd = join(tmpdir(), `subagent-test-other-${Date.now()}`)
+      mkdirSync(otherCwd, { recursive: true })
+      const r2 = await agent
+        .post('/api/open')
+        .send({ subagent: 'test-agent', cwd: otherCwd, reuse: true })
+        .set('Content-Type', 'application/json')
+        .expect(200)
+      assert.notEqual(r2.body.data.session, r1.body.data.session, 'Different cwd should not reuse')
+
+      await agent.post(`/api/session/${r1.body.data.session}/close`)
+      await agent.post(`/api/session/${r2.body.data.session}/close`)
+      rmSync(otherCwd, { recursive: true, force: true })
+    })
+
+    it('should not reuse session with different subagent', async () => {
+      const r1 = await agent
+        .post('/api/open')
+        .send({ subagent: 'test-agent', cwd: VALID_CWD })
+        .set('Content-Type', 'application/json')
+        .expect(200)
+      ctx.sessions.get(r1.body.data.session)._setState('IDLE')
+
+      const r2 = await agent
+        .post('/api/open')
+        .send({ subagent: 'another-agent', cwd: VALID_CWD, reuse: true })
+        .set('Content-Type', 'application/json')
+        .expect(200)
+      assert.notEqual(r2.body.data.session, r1.body.data.session, 'Different subagent should not reuse')
+
+      await agent.post(`/api/session/${r1.body.data.session}/close`)
+      await agent.post(`/api/session/${r2.body.data.session}/close`)
+    })
+
+    it('should send inline prompt to reused session', async () => {
+      ctx.sessions.forEach(a => a._setState('RUNNING'))
+      const r1 = await agent
+        .post('/api/open')
+        .send({ subagent: 'test-agent', cwd: VALID_CWD })
+        .set('Content-Type', 'application/json')
+        .expect(200)
+      const firstId = r1.body.data.session
+      ctx.sessions.get(firstId)._setState('IDLE')
+
+      const r2 = await agent
+        .post('/api/open')
+        .send({ subagent: 'test-agent', cwd: VALID_CWD, reuse: true, prompt: 'reuse with prompt' })
+        .set('Content-Type', 'application/json')
+        .expect(200)
+      assert.equal(r2.body.data.session, firstId)
+      assert.equal(r2.body.data.reused, true)
+      assert.equal(r2.body.data.status, 'done')
+      assert.ok(r2.body.data.output?.includes('reuse with prompt'))
+      ctx.sessions.forEach(a => a._setState('IDLE'))
+      await agent.post(`/api/session/${firstId}/close`)
+    })
+
     it('should close session', async () => {
       const res = await agent.post(`/api/session/${sessionId}/close`).expect(200)
       assert.equal(res.body.data.status, 'closed')
@@ -369,6 +481,187 @@ describe('App HTTP API', () => {
     it('should return CLOSED after session closed (disk fallback)', async () => {
       const res = await agent.get(`/api/session/${sessionId}/status`).expect(200)
       assert.equal(res.body.data.state, 'CLOSED')
+    })
+  })
+
+  // ── fast_reuse default behavior ──
+  describe('POST /api/open — fast_reuse default', () => {
+    let ctxFast
+    let agentFast
+
+    before(() => {
+      const fastConfig = {
+        ...testConfig,
+        idle: { ...testConfig.idle, fast_reuse: true },
+      }
+      ctxFast = app({
+        config: fastConfig,
+        adapterFactory: () => createMockAdapter(),
+      })
+      agentFast = request(ctxFast.app.callback())
+    })
+
+    after(() => { ctxFast.stop() })
+
+    it('should reuse by default when fast_reuse=true (no --reuse flag)', async () => {
+      const r1 = await agentFast
+        .post('/api/open')
+        .send({ subagent: 'test-agent', cwd: VALID_CWD })
+        .set('Content-Type', 'application/json')
+        .expect(200)
+      ctxFast.sessions.get(r1.body.data.session)._setState('IDLE')
+
+      const r2 = await agentFast
+        .post('/api/open')
+        .send({ subagent: 'test-agent', cwd: VALID_CWD })
+        .set('Content-Type', 'application/json')
+        .expect(200)
+      assert.equal(r2.body.data.session, r1.body.data.session, 'fast_reuse should auto-reuse')
+      assert.equal(r2.body.data.reused, true)
+      await agentFast.post(`/api/session/${r1.body.data.session}/close`)
+    })
+
+    it('should opt out with reuse=false when fast_reuse=true', async () => {
+      const r1 = await agentFast
+        .post('/api/open')
+        .send({ subagent: 'test-agent', cwd: VALID_CWD })
+        .set('Content-Type', 'application/json')
+        .expect(200)
+      ctxFast.sessions.get(r1.body.data.session)._setState('IDLE')
+
+      const r2 = await agentFast
+        .post('/api/open')
+        .send({ subagent: 'test-agent', cwd: VALID_CWD, reuse: false })
+        .set('Content-Type', 'application/json')
+        .expect(200)
+      assert.notEqual(r2.body.data.session, r1.body.data.session, 'reuse=false should override fast_reuse')
+      await agentFast.post(`/api/session/${r1.body.data.session}/close`)
+      await agentFast.post(`/api/session/${r2.body.data.session}/close`)
+    })
+
+    describe('reuse_ratio enforcement', () => {
+      let ctxRatio
+      let agentRatio
+
+      before(() => {
+        // timeout=10s, reuse_ratio=0.5 → must be idle >= 5s to reuse
+        const ratioConfig = {
+          ...testConfig,
+          idle: { ...testConfig.idle, timeout: 10, reuse_ratio: 0.5 },
+        }
+        ctxRatio = app({
+          config: ratioConfig,
+          adapterFactory: () => createMockAdapter(),
+        })
+        agentRatio = request(ctxRatio.app.callback())
+      })
+
+      after(() => { ctxRatio.stop() })
+
+      it('should NOT reuse when idle age < reuse_ratio * timeout', async () => {
+        const r1 = await agentRatio
+          .post('/api/open')
+          .send({ subagent: 'test-agent', cwd: VALID_CWD })
+          .set('Content-Type', 'application/json')
+          .expect(200)
+        ctxRatio.sessions.get(r1.body.data.session)._setState('IDLE')
+
+        // Just opened, idle age ≈ 0 → not eligible for reuse (cooldown 5s)
+        const r2 = await agentRatio
+          .post('/api/open')
+          .send({ subagent: 'test-agent', cwd: VALID_CWD, reuse: true })
+          .set('Content-Type', 'application/json')
+          .expect(200)
+        assert.notEqual(r2.body.data.session, r1.body.data.session,
+          'Fresh IDLE session should NOT be reused (cooldown not met)')
+        await agentRatio.post(`/api/session/${r1.body.data.session}/close`)
+        await agentRatio.post(`/api/session/${r2.body.data.session}/close`)
+      })
+    })
+  })
+
+  // ── Recursive subagent-cli protection ──
+  describe('POST /api/open — recursive call exclusion', () => {
+    let ctxRecur
+    let agentRecur
+
+    before(() => {
+      // reuse_ratio=0 so any IDLE session is immediately reusable
+      const recurConfig = {
+        ...testConfig,
+        idle: { ...testConfig.idle, reuse_ratio: 0 },
+      }
+      ctxRecur = app({
+        config: recurConfig,
+        adapterFactory: () => createMockAdapter(),
+      })
+      agentRecur = request(ctxRecur.app.callback())
+    })
+
+    after(() => { ctxRecur.stop() })
+
+    it('should inject SUBAGENT_CLI_SESSION env on new session creation', async () => {
+      const res = await agentRecur
+        .post('/api/open')
+        .send({ subagent: 'test-agent', cwd: VALID_CWD })
+        .set('Content-Type', 'application/json')
+        .expect(200)
+      const id = res.body.data.session
+      const params = ctxRecur.sessions.get(id)._getParams()
+      assert.equal(params.env.SUBAGENT_CLI_SESSION, id,
+        'env.SUBAGENT_CLI_SESSION should equal own session id')
+      await agentRecur.post(`/api/session/${id}/close`)
+    })
+
+    it('should exclude self from reuse via exclude_session', async () => {
+      const r1 = await agentRecur
+        .post('/api/open')
+        .send({ subagent: 'test-agent', cwd: VALID_CWD })
+        .set('Content-Type', 'application/json')
+        .expect(200)
+      const parentId = r1.body.data.session
+      ctxRecur.sessions.get(parentId)._setState('IDLE')
+
+      // Recursive call passes exclude_session=parentId → must not reuse parent
+      const r2 = await agentRecur
+        .post('/api/open')
+        .send({ subagent: 'test-agent', cwd: VALID_CWD, reuse: true, exclude_session: parentId })
+        .set('Content-Type', 'application/json')
+        .expect(200)
+      assert.notEqual(r2.body.data.session, parentId,
+        'Recursive call must not reuse its own parent session')
+
+      await agentRecur.post(`/api/session/${parentId}/close`)
+      await agentRecur.post(`/api/session/${r2.body.data.session}/close`)
+    })
+
+    it('should reuse a non-self IDLE session even with exclude_session set', async () => {
+      const r1 = await agentRecur
+        .post('/api/open')
+        .send({ subagent: 'test-agent', cwd: VALID_CWD })
+        .set('Content-Type', 'application/json')
+        .expect(200)
+      const idA = r1.body.data.session
+      ctxRecur.sessions.get(idA)._setState('IDLE')
+
+      const r2 = await agentRecur
+        .post('/api/open')
+        .send({ subagent: 'test-agent', cwd: VALID_CWD })
+        .set('Content-Type', 'application/json')
+        .expect(200)
+      const idB = r2.body.data.session
+      ctxRecur.sessions.get(idB)._setState('IDLE')
+
+      const r3 = await agentRecur
+        .post('/api/open')
+        .send({ subagent: 'test-agent', cwd: VALID_CWD, reuse: true, exclude_session: idA })
+        .set('Content-Type', 'application/json')
+        .expect(200)
+      assert.notEqual(r3.body.data.session, idA, 'Must not reuse self')
+      assert.equal(r3.body.data.reused, true, 'Should reuse the non-self IDLE candidate')
+
+      await agentRecur.post(`/api/session/${idA}/close`)
+      await agentRecur.post(`/api/session/${idB}/close`)
     })
   })
 
@@ -692,6 +985,26 @@ describe('App HTTP API', () => {
       assert.equal(res.body.code, 404)
       assert.equal(typeof res.body.data.error, 'string')
       assert.equal(typeof res.body.data.message, 'string')
+    })
+  })
+
+  // ── POST /api/shutdown ──
+
+  describe('POST /api/shutdown', () => {
+    it('loopback shutdown responds 200 then triggers onExit(0)', async () => {
+      let exitCode = null
+      const ctxSd = app({
+        config: testConfig,
+        adapterFactory: () => createMockAdapter(),
+        onExit: (code) => { exitCode = code },
+      })
+      const agentSd = request(ctxSd.app.callback())
+      const res = await agentSd.post('/api/shutdown').expect(200)
+      assert.equal(res.body.success, true)
+      assert.equal(res.body.data.status, 'shutting_down')
+      // onExit fires after the 50ms defer (response already flushed)
+      await new Promise(r => setTimeout(r, 200))
+      assert.equal(exitCode, 0, 'onExit should be called with code 0 after response')
     })
   })
 })

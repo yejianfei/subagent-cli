@@ -22,12 +22,13 @@ function getPort() {
   return 7100
 }
 
-function cli(args, timeoutMs = 180_000) {
+function cli(args, timeoutMs = 180_000, extraEnv) {
   return new Promise((resolve, reject) => {
     const child = execFile('node', [CLI, ...args], {
       timeout: timeoutMs,
       cwd: process.cwd(),
       maxBuffer: 10 * 1024 * 1024,
+      env: extraEnv ? { ...process.env, ...extraEnv } : process.env,
     }, (err, stdout, stderr) => {
       if (stderr) console.error(`    [stderr] ${stderr.trim().substring(0, 300)}`)
       const text = (stdout ?? '').trim()
@@ -893,6 +894,82 @@ describe('E2E: New features (v0.1.11)', { timeout: 600_000 }, () => {
     rmSync(closeDir, { recursive: true, force: true })
   })
 
+  it('52 --reuse resumes CLOSED disk session with same cwd+subagent', async () => {
+    const reuseDir = mkdtempSync(join(tmpdir(), 'subagent-reuse-'))
+    // Open + close to leave a resumeable session on disk
+    const { json: r1 } = await cli(['open', '-s', 'haiku', '--cwd', reuseDir], 300_000)
+    assert.equal(r1.success, true)
+    const sid1 = r1.data.session
+    await cli(['close', '--session', sid1])
+
+    // Open --reuse: should resume sid1, not create new
+    const { json: r2 } = await cli(['open', '-s', 'haiku', '--cwd', reuseDir, '--reuse'], 300_000)
+    assert.equal(r2.success, true)
+    assert.equal(r2.data.session, sid1, 'Should reuse CLOSED disk session')
+    assert.equal(r2.data.reused, true)
+    console.log(`    Reused session: ${sid1}`)
+
+    await cli(['close', '--session', sid1])
+    await cli(['delete', '--session', sid1])
+    rmSync(reuseDir, { recursive: true, force: true })
+  })
+
+  it('53 --reuse with inline prompt: resume + send prompt in one call', async () => {
+    const inlineReuseDir = mkdtempSync(join(tmpdir(), 'subagent-inline-reuse-'))
+    const { json: r1 } = await cli(['open', '-s', 'haiku', '--cwd', inlineReuseDir], 300_000)
+    const sid1 = r1.data.session
+    await cli(['close', '--session', sid1])
+
+    const { json: r2 } = await cli([
+      'open', '-s', 'haiku', '--cwd', inlineReuseDir, '--reuse', 'say hi in one word',
+    ], 300_000)
+    assert.equal(r2.success, true)
+    assert.equal(r2.data.session, sid1)
+    assert.equal(r2.data.reused, true)
+    assert.ok(r2.data.status === 'done' || r2.data.status === 'approval_needed')
+    console.log(`    Reused + prompted: status=${r2.data.status}`)
+
+    await cli(['close', '--session', sid1])
+    await cli(['delete', '--session', sid1])
+    rmSync(inlineReuseDir, { recursive: true, force: true })
+  })
+
+  it('54 recursive self-reference guard blocks self-targeted commands', async () => {
+    const recurDir = mkdtempSync(join(tmpdir(), 'subagent-recur-'))
+    const { json: r1 } = await cli(['open', '-s', 'haiku', '--cwd', recurDir], 300_000)
+    assert.equal(r1.success, true)
+    const sid = r1.data.session
+
+    // Simulate a recursive subagent-cli call: SUBAGENT_CLI_SESSION env = own session id
+    const env = { SUBAGENT_CLI_SESSION: sid }
+
+    // prompt --session <self> → blocked, no daemon round-trip
+    const { json: selfPrompt } = await cli(['prompt', 'hi', '--session', sid], 30_000, env)
+    assert.equal(selfPrompt.success, false)
+    assert.equal(selfPrompt.data.error, 'RECURSIVE_SELF_REFERENCE')
+
+    // open --session <self> → blocked
+    const { json: selfOpen } = await cli(['open', '-s', 'haiku', '--cwd', recurDir, '--session', sid], 30_000, env)
+    assert.equal(selfOpen.success, false)
+    assert.equal(selfOpen.data.error, 'RECURSIVE_SELF_REFERENCE')
+
+    // close --session <self> → blocked (must not let a child kill its own parent)
+    const { json: selfClose } = await cli(['close', '--session', sid], 30_000, env)
+    assert.equal(selfClose.success, false)
+    assert.equal(selfClose.data.error, 'RECURSIVE_SELF_REFERENCE')
+
+    // A different session id is NOT blocked by the guard (would 404, not RECURSIVE)
+    const { json: other } = await cli(['status', '--session', 'nonexistent-other'], 30_000, env)
+    assert.notEqual(other.data?.error, 'RECURSIVE_SELF_REFERENCE')
+
+    console.log(`    Self-ref guard blocked prompt/open/close on ${sid}`)
+
+    // Cleanup uses no env so the guard doesn't block teardown
+    await cli(['close', '--session', sid])
+    await cli(['delete', '--session', sid])
+    rmSync(recurDir, { recursive: true, force: true })
+  })
+
   after(async () => {
     await cleanupSession(sessionId)
     rmSync(tmpDir, { recursive: true, force: true })
@@ -933,6 +1010,58 @@ describe('Error paths', { timeout: 60_000 }, () => {
     assert.equal(json.success, true)
     assert.ok(Array.isArray(json.data.closed))
     console.log(`    Closed: ${json.data.closed.length} sessions`)
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════
+// Daemon lifecycle (single-instance: start/status/stop)
+// ══════════════════════════════════════════════════════════════════
+
+describe('Daemon lifecycle', { timeout: 60_000 }, () => {
+  it('㊵ status: reports current daemon state', async () => {
+    const { json } = await cli(['daemon', 'status'])
+    assert.equal(json.success, true)
+    assert.equal(typeof json.data.running, 'boolean')
+  })
+
+  it('㊶ start: already_running when daemon is up', async () => {
+    // Make sure a daemon is up (any prior cli call auto-forks it)
+    await cli(['subagents'])
+    const { json } = await cli(['daemon', 'start'])
+    assert.equal(json.success, true)
+    assert.equal(json.data.status, 'already_running')
+    assert.ok(typeof json.data.pid === 'number')
+    assert.ok(typeof json.data.port === 'number')
+  })
+
+  it('㊷ stop: gracefully stops the daemon', async () => {
+    const { json } = await cli(['daemon', 'stop'], 30_000)
+    assert.equal(json.success, true)
+    assert.equal(json.data.status, 'stopped')
+  })
+
+  it('㊸ status: not running after stop', async () => {
+    const { json } = await cli(['daemon', 'status'])
+    assert.equal(json.data.running, false)
+  })
+
+  it('㊹ stop: not_running when already stopped', async () => {
+    const { json } = await cli(['daemon', 'stop'])
+    assert.equal(json.data.status, 'not_running')
+  })
+
+  it('㊺ start: starts a fresh daemon and writes pid+port', async () => {
+    const { json } = await cli(['daemon', 'start'], 30_000)
+    assert.equal(json.success, true)
+    assert.equal(json.data.status, 'started')
+    assert.ok(typeof json.data.port === 'number')
+  })
+
+  it('㊻ status: running with valid pid after start', async () => {
+    const { json } = await cli(['daemon', 'status'])
+    assert.equal(json.data.running, true)
+    assert.ok(typeof json.data.pid === 'number' && json.data.pid > 0)
+    assert.ok(typeof json.data.port === 'number' && json.data.port > 0)
   })
 })
 

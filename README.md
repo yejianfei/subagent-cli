@@ -163,7 +163,7 @@ Auto-fix mechanical issues and re-review in a loop until all issues are resolved
 | ----------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------- |
 | `subagents` |                                                                          | List available subagent configurations                           |
 | `sessions`  | `--cwd <path>` `--status <state>`                                        | List sessions (active + closed), filter by cwd or state          |
-| `open`      | `-s, --subagent <name>` `--cwd <path>` `--session <id>` `--role <text>` `--timeout <s>` `[text]` | Create or resume session. Optional `[text]` sends a prompt after open (one-shot create + prompt). `--role` overrides config role (new sessions only) |
+| `open`      | `-s, --subagent <name>` `--cwd <path>` `--session <id>` `--role <text>` `--reuse` `--timeout <s>` `[text]` | Create or resume session. Optional `[text]` sends a prompt after open. `--reuse` returns most-recent idle/closed session with same cwd+subagent (set `idle.fast_reuse=true` to make this the default). `--role` overrides config role (new sessions only) |
 | `prompt`    | `--session <id>` `--timeout <s>` `<text>`                                | Send task, blocks until done or approval needed                  |
 | `approve`   | `--session <id>` `--timeout <s>` `-f` `[text]`                          | Approve tool use. Optional text typed before approval            |
 | `allow`     | `--session <id>` `--timeout <s>` `-f`                                    | Approve via option 2. Scope depends on target CLI                |
@@ -176,6 +176,7 @@ Auto-fix mechanical issues and re-review in a loop until all issues are resolved
 | `close`     | `--session <id>`                                                         | Close session (omit `--session` to close all). History preserved |
 | `delete`    | `--session <id>` `--closed` `--all`                                      | Delete session, all closed, or everything                        |
 | `exit`      | `--session <id>`                                                         | Graceful exit the sub-agent process                              |
+| `daemon`    | `start\|stop\|status` `--port <port>`                                    | Manage the App daemon. Single-instance globally: `start` refuses if a live daemon exists on any port. `stop` uses HTTP shutdown |
 
 Global option: `-c, --config <path>` — Custom config file path.
 
@@ -186,7 +187,7 @@ Config file: `~/.subagent-cli/config.json` (auto-created on first run)
 ```json
 {
   "port": 7100,
-  "idle": { "timeout": 300, "check_interval": 30, "manager_timeout": 120 },
+  "idle": { "timeout": 300, "check_interval": 30, "manager_timeout": 120, "reuse_ratio": 0.5, "fast_reuse": false },
   "terminal": { "cols": 220, "rows": 50, "scrollback": 5000 },
   "subagents": {
     "haiku": {
@@ -247,6 +248,8 @@ Config file: `~/.subagent-cli/config.json` (auto-created on first run)
 | `idle.timeout`         | `number` | `300`   | Session idle timeout (seconds). Auto-close when exceeded               |
 | `idle.check_interval`  | `number` | `30`    | How often to check for idle sessions (seconds)                         |
 | `idle.manager_timeout` | `number` | `120`   | App auto-exit delay when no sessions remain (seconds). `-1` to disable |
+| `idle.reuse_ratio`     | `number` | `0.5`   | `--reuse` cooldown: idle session must be idle for at least `timeout * reuse_ratio` seconds before reuse |
+| `idle.fast_reuse`      | `boolean`| `false` | Make `--reuse` the default for `open`. Pass `--no-reuse` to opt out |
 
 **`terminal`** — PTY terminal settings
 

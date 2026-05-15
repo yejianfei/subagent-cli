@@ -1,5 +1,50 @@
 # Changelog
 
+## [0.1.17] - 2026-05-13
+
+### Added
+- **`open --reuse`**: skip session creation by reusing existing IDLE/CLOSED session matching `cwd + subagent + adapter`. Combines with inline `[text]` for one-shot reuse + prompt:
+  ```bash
+  subagent-cli open -s gemini --cwd . --reuse "code review this file"
+  ```
+- **`idle.reuse_ratio`** (default `0.5`): cooldown ratio — active IDLE session must be idle for at least `idle.timeout * reuse_ratio` seconds before being reusable (prevents race conditions when other callers may be about to use it)
+- **`idle.fast_reuse`** (default `false`): when `true`, `--reuse` becomes default for all `open` commands. Pass `--no-reuse` to opt out
+- Response field `reused: true` when an existing session was reused
+- **Recursive subagent-cli self-protection** — prevents a sub-agent from reusing or controlling its own session when it calls `subagent-cli` recursively:
+  - Daemon injects `SUBAGENT_CLI_SESSION=<id>` env into each session's PTY
+  - Client auto-passes `exclude_session` on `open` so reuse never returns the caller's own session
+  - `RECURSIVE_SELF_REFERENCE` (400) returned client-side when any `--session <id>` command (`open/prompt/approve/reject/allow/auto/status/check/output/cancel/exit/close/delete`) targets the caller's own session
+
+### Priority
+
+`open` resolution order (highest first):
+1. `--session <id>` present → reuse that session
+2. no `--session`, `--reuse` present → reuse by `cwd + subagent`
+3. no `--session`/`--reuse`, `fast_reuse=true` → reuse by `cwd + subagent`
+4. otherwise → create new session
+
+Reuse candidate selection (steps 2/3): active IDLE (oldest lastActivity within cooldown window) > disk CLOSED with resume_id (newest created_at) > fall back to create new
+
+### Added — Daemon lifecycle
+
+- **`subagent-cli daemon start|stop|status`** — manage the App daemon explicitly:
+  - `start [--port <port>]` — fork the daemon on the given port (defaults to `config.port`). Returns `already_running` if a live daemon (any port) is already recorded
+  - `stop` — POST `/api/shutdown` (loopback only) → graceful close, returns `stopped`
+  - `status` — `{ running, port, pid }` (port/pid resolved from the daemon info file, not config)
+- **Single-instance enforcement**: at most one daemon globally. `start` first checks `~/.subagent-cli/daemon.pid` for a live process (`pid,port` plain text); if alive, refuses with `already_running` — even if `--port` differs
+- **`POST /api/shutdown`** — loopback-only HTTP endpoint that triggers a graceful daemon shutdown
+- **Daemon info file** (`~/.subagent-cli/daemon.pid`) — plain text `<pid>,<port>` written on start, cleared on shutdown / idle-timeout exit
+- **Dynamic port resolution in client**: `SubagentClient` reads the daemon info file first — if a live daemon is recorded on a non-default port (e.g. you started with `daemon start --port 7200`), the client connects to that port automatically
+
+### Refactored
+
+- **`src/daemon_lifecycle.ts`** (new) — shared `probePort` / `forkDaemonAndWait` / `isProcessAlive` / daemon-info file helpers. `SubagentClient.ensureManager()` and the `daemon` CLI command both consume this module (single source of truth for daemon lifecycle)
+- **`config.applyHome(home?)`** — apply a home-dir override when an in-memory config is passed without going through `loadConfig()` (fixes test isolation: `app({config: { home: TEST_HOME }})` now actually uses `TEST_HOME` for `getHome()`)
+
+### Tests
+- 3 E2E suites: 152 tests total (Claude 69, Codex 42, Gemini 41), all passing
+- 174 unit tests (added daemon shutdown / pid-file / process-alive coverage), all passing
+
 ## [0.1.16] - 2026-05-13
 
 ### Added

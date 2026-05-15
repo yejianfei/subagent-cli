@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { program } from 'commander'
-import { setConfigPath } from './config'
+import { setConfigPath, loadConfig } from './config'
 import { SubagentClient } from './client'
+import { probePort, forkDaemonAndWait, readDaemonInfo, clearDaemonInfo, isProcessAlive } from './daemon_lifecycle'
 
 declare const __VERSION__: string
 
@@ -20,6 +21,7 @@ Workflow:
   2. subagent-cli open -s haiku --cwd .             # start session, returns session ID
      subagent-cli open -s haiku --cwd . --role "Java expert"  # custom role as session title
      subagent-cli open -s haiku --cwd . "do the task"        # open + send first prompt
+     subagent-cli open -s haiku --cwd . --reuse "task"       # reuse same-cwd session (set idle.fast_reuse=true to default-on)
   3. subagent-cli check --session <id>           # verify state before every command!
   4. subagent-cli prompt --session <id> "task"   # send task, done returns output field
   5. subagent-cli approve --session <id>         # approve tool use, done returns output
@@ -55,6 +57,12 @@ Cleanup:
   subagent-cli delete --closed                   # delete all closed sessions
   subagent-cli delete --all                      # close active + delete all
   subagent-cli close                             # close all sessions (keep history)
+
+Daemon (single instance globally):
+  subagent-cli daemon status                     # { running, port, pid }
+  subagent-cli daemon start                      # fork on config.port (no-op if alive)
+  subagent-cli daemon start --port 7200          # fork on 7200; refused if a live daemon exists
+  subagent-cli daemon stop                       # graceful HTTP shutdown
 
 Config: ~/.subagent-cli/config.json  (override with -c)
 Home:   ~/.subagent-cli/             (override with config.home field)
@@ -99,6 +107,7 @@ program
   .option('--cwd <dir>', 'Working directory (default: current dir)')
   .option('--session <id>', 'Session ID to reconnect or pre-assign')
   .option('--role <text>', 'Role prompt (overrides config role, used as session title)')
+  .option('--reuse', 'Reuse most-recent idle/closed session with same cwd+subagent (use --no-reuse to opt out when fast_reuse=true)')
   .option('--timeout <seconds>', 'Startup timeout in seconds (overrides config)')
   .action(async (text, opts) => {
     await output(await client().open({
@@ -107,6 +116,7 @@ program
       session: opts.session,
       role: opts.role,
       prompt: text,
+      reuse: opts.reuse,
       timeout: opts.timeout ? Number(opts.timeout) : undefined,
     }))
   })
@@ -231,6 +241,63 @@ program
     } else {
       await output({ success: false, data: { error: 'INVALID_STATE', message: 'Specify --session <id>, --closed, or --all' } })
     }
+  })
+
+program
+  .command('daemon <action>')
+  .description('Manage the App daemon: start | stop | status')
+  .option('--port <port>', 'Override daemon port (default: config.json port)')
+  .action(async (action, opts) => {
+    const config = loadConfig()
+    const info = readDaemonInfo()
+    const live = info && isProcessAlive(info.pid) ? info : undefined
+
+    if (action === 'start') {
+      // Single instance: a live daemon (on any port) blocks a new start
+      if (live) {
+        await output({ success: true, code: 200, data: { status: 'already_running', port: live.port, pid: live.pid } })
+        return
+      }
+      if (info) clearDaemonInfo() // stale info from a dead process
+      const port = opts.port ? Number(opts.port) : config.port
+      await forkDaemonAndWait(port)
+      await output({ success: true, code: 200, data: { status: 'started', port } })
+      return
+    }
+
+    if (action === 'status') {
+      const running = !!live && await probePort(live.port)
+      await output({ success: true, code: 200, data: { running, port: live?.port, pid: live?.pid } })
+      return
+    }
+
+    if (action === 'stop') {
+      if (!live) {
+        if (info) clearDaemonInfo()
+        await output({ success: true, code: 200, data: { status: 'not_running' } })
+        return
+      }
+      try {
+        await fetch(`http://localhost:${live.port}/api/shutdown`, { method: 'POST' })
+      } catch { /* daemon may close the socket before responding — fall through to wait */ }
+      const stopped = await Array.from({ length: 50 }).reduce<Promise<boolean>>(async (prev) => {
+        if (await prev) return true
+        await new Promise(r => setTimeout(r, 100))
+        return !(await probePort(live.port))
+      }, Promise.resolve(false))
+      if (stopped) {
+        clearDaemonInfo()
+        await output({ success: true, code: 200, data: { status: 'stopped', port: live.port } })
+        return
+      }
+      await output({
+        success: false, code: 500,
+        data: { error: 'STOP_FAILED', message: `Daemon (pid ${live.pid}, port ${live.port}) did not stop. Kill manually: kill ${live.pid}` },
+      })
+      return
+    }
+
+    await output({ success: false, code: 400, data: { error: 'INVALID_STATE', message: `Unknown daemon action: ${action} (use start|stop|status)` } })
   })
 
 program.parseAsync()

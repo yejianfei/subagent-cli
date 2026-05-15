@@ -1,57 +1,50 @@
-import { connect } from 'net'
-import { fork } from 'child_process'
-import { join, dirname } from 'path'
-import { realpathSync } from 'fs'
 import { loadConfig } from './config'
+import { forkDaemonAndWait, readDaemonInfo, isProcessAlive } from './daemon_lifecycle'
 
 export class SubagentClient {
-  private baseUrl: string
+  private port!: number
 
-  constructor() {
-    const config = loadConfig()
-    this.baseUrl = `http://localhost:${config.port}/api`
-  }
-
+  /**
+   * Resolve the daemon and its port (single instance).
+   * If a live daemon is recorded (pid alive), connect to its port — even if
+   * it differs from config (user may have started it with `daemon start --port`).
+   * Otherwise fork a fresh daemon on the config port.
+   */
   private async ensureManager(): Promise<void> {
+    const info = readDaemonInfo()
+    if (info && isProcessAlive(info.pid)) {
+      this.port = info.port
+      return
+    }
     const config = loadConfig()
-    if (await this.probePort(config.port)) return
-
-    const realDir = dirname(realpathSync(__filename))
-    const appPath = join(realDir, 'app.js')
-    let exitCode: number | null = null
-    const child = fork(appPath, [], { detached: true, stdio: 'ignore', env: { ...process.env, SUBAGENT_DAEMON: '1' } })
-    child.on('exit', (code) => { exitCode = code })
-    child.unref()
-
-    const probed = await Array.from({ length: 50 }).reduce<Promise<boolean>>(async (prev) => {
-      if (await prev) return true
-      if (exitCode !== null) return false
-      await new Promise(r => setTimeout(r, 100))
-      return this.probePort(config.port)
-    }, Promise.resolve(false))
-    if (probed) return
-    throw new Error(exitCode !== null
-      ? `Manager failed to start (exit ${exitCode}). Check PTY permissions or start manually: SUBAGENT_DAEMON=1 node app.js`
-      : 'Manager failed to start within 5 seconds')
-  }
-
-  private probePort(port: number): Promise<boolean> {
-    return new Promise((resolve) => {
-      const socket = connect({ port, timeout: 200 })
-      socket.on('connect', () => { socket.destroy(); resolve(true) })
-      socket.on('error', () => resolve(false))
-      socket.on('timeout', () => { socket.destroy(); resolve(false) })
-    })
+    await forkDaemonAndWait(config.port)
+    this.port = config.port
   }
 
   private async request(method: string, path: string, body?: unknown): Promise<unknown> {
     await this.ensureManager()
-    const res = await fetch(`${this.baseUrl}${path}`, {
+    const res = await fetch(`http://localhost:${this.port}/api${path}`, {
       method,
       headers: body ? { 'Content-Type': 'application/json' } : {},
       body: body ? JSON.stringify(body) : undefined,
     })
     return res.json()
+  }
+
+  /** Reject any command that targets the caller's own session (prevents recursive self-control). */
+  private guardSelfRef(sessionId: string): { success: false; code: number; data: { error: string; message: string } } | null {
+    const self = process.env.SUBAGENT_CLI_SESSION
+    if (self && sessionId === self) {
+      return {
+        success: false,
+        code: 400,
+        data: {
+          error: 'RECURSIVE_SELF_REFERENCE',
+          message: `Session ${sessionId} is the current subagent-cli session — recursive self-control is forbidden`,
+        },
+      }
+    }
+    return null
   }
 
   getSubagents() { return this.request('GET', '/subagents') }
@@ -64,33 +57,50 @@ export class SubagentClient {
     return this.request('GET', `/sessions${qs ? `?${qs}` : ''}`)
   }
 
-  open(params: { subagent?: string; cwd?: string; session?: string; role?: string; prompt?: string; timeout?: number }) {
-    return this.request('POST', '/open', params)
+  open(params: { subagent?: string; cwd?: string; session?: string; role?: string; prompt?: string; reuse?: boolean; timeout?: number }) {
+    // open --session <id> targeting own session is forbidden (recursive self-control)
+    if (params.session) {
+      const err = this.guardSelfRef(params.session)
+      if (err) return Promise.resolve(err)
+    }
+    // Recursive call: pass exclude_session so reuse (when enabled via fast_reuse or --reuse) excludes the caller's own session.
+    const excludeSession = process.env.SUBAGENT_CLI_SESSION
+    const body = excludeSession ? { ...params, exclude_session: excludeSession } : params
+    return this.request('POST', '/open', body)
   }
 
   prompt(session: string, prompt: string, timeout?: number) {
+    const err = this.guardSelfRef(session); if (err) return Promise.resolve(err)
     return this.request('POST', `/session/${session}/prompt`, { prompt, timeout })
   }
 
   approve(session: string, prompt?: string, timeout?: number, force?: boolean) {
+    const err = this.guardSelfRef(session); if (err) return Promise.resolve(err)
     return this.request('POST', `/session/${session}/approve`, { prompt, timeout, force })
   }
 
   reject(session: string, prompt?: string, timeout?: number, force?: boolean) {
+    const err = this.guardSelfRef(session); if (err) return Promise.resolve(err)
     return this.request('POST', `/session/${session}/reject`, { prompt, timeout, force })
   }
 
   allow(session: string, timeout?: number, force?: boolean) {
+    const err = this.guardSelfRef(session); if (err) return Promise.resolve(err)
     return this.request('POST', `/session/${session}/allow`, { timeout, force })
   }
 
   auto(session: string, enabled = true) {
+    const err = this.guardSelfRef(session); if (err) return Promise.resolve(err)
     return this.request('POST', `/session/${session}/auto`, { enabled })
   }
 
-  status(session: string) { return this.request('GET', `/session/${session}/status`) }
+  status(session: string) {
+    const err = this.guardSelfRef(session); if (err) return Promise.resolve(err)
+    return this.request('GET', `/session/${session}/status`)
+  }
 
   check(session: string, wait?: string, timeout?: number, output?: string) {
+    const err = this.guardSelfRef(session); if (err) return Promise.resolve(err)
     const params = new URLSearchParams()
     wait && params.set('wait', wait)
     timeout && params.set('timeout', String(timeout))
@@ -100,13 +110,26 @@ export class SubagentClient {
   }
 
   output(session: string, type = 'screen') {
+    const err = this.guardSelfRef(session); if (err) return Promise.resolve(err)
     return this.request('GET', `/session/${session}/output/${type}`)
   }
 
-  cancel(session: string) { return this.request('POST', `/session/${session}/cancel`) }
-  exit(session: string) { return this.request('POST', `/session/${session}/exit`) }
-  close(session: string) { return this.request('POST', `/session/${session}/close`) }
-  delete(session: string) { return this.request('DELETE', `/session/${session}`) }
+  cancel(session: string) {
+    const err = this.guardSelfRef(session); if (err) return Promise.resolve(err)
+    return this.request('POST', `/session/${session}/cancel`)
+  }
+  exit(session: string) {
+    const err = this.guardSelfRef(session); if (err) return Promise.resolve(err)
+    return this.request('POST', `/session/${session}/exit`)
+  }
+  close(session: string) {
+    const err = this.guardSelfRef(session); if (err) return Promise.resolve(err)
+    return this.request('POST', `/session/${session}/close`)
+  }
+  delete(session: string) {
+    const err = this.guardSelfRef(session); if (err) return Promise.resolve(err)
+    return this.request('DELETE', `/session/${session}`)
+  }
   deleteClosed() { return this.request('DELETE', '/sessions/closed') }
   deleteAll() { return this.request('DELETE', '/sessions/all') }
   closeAll() { return this.request('POST', '/close') }

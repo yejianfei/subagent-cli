@@ -23,12 +23,13 @@ function getPort() {
   return 7100
 }
 
-function cli(args, timeoutMs = 180_000) {
+function cli(args, timeoutMs = 180_000, extraEnv) {
   return new Promise((resolve, reject) => {
     const child = execFile('node', [CLI, ...args], {
       timeout: timeoutMs,
       cwd: process.cwd(),
       maxBuffer: 10 * 1024 * 1024,
+      env: extraEnv ? { ...process.env, ...extraEnv } : process.env,
     }, (err, stdout, stderr) => {
       if (stderr) console.error(`    [stderr] ${stderr.trim().substring(0, 300)}`)
       const text = (stdout ?? '').trim()
@@ -656,6 +657,55 @@ describe('E2E: Gemini new features', { timeout: 600_000 }, () => {
     await cli(['delete', '--session', sid])
     cleanGeminiSessions(closeDir)
     rmSync(closeDir, { recursive: true, force: true })
+  })
+
+  it('㉝ --reuse resumes CLOSED disk session', async () => {
+    const reuseDir = mkdtempSync(join(tmpdir(), 'subagent-gemini-reuse-'))
+    const { json: r1 } = await cli(['open', '-s', 'gemini', '--cwd', reuseDir], 300_000)
+    const sid1 = r1.data.session
+    await cli(['close', '--session', sid1])
+
+    const { json: r2 } = await cli(['open', '-s', 'gemini', '--cwd', reuseDir, '--reuse'], 300_000)
+    assert.equal(r2.success, true)
+    assert.equal(r2.data.session, sid1, 'Should reuse CLOSED disk session')
+    assert.equal(r2.data.reused, true)
+    console.log(`    Reused session: ${sid1}`)
+
+    await cli(['close', '--session', sid1])
+    await cli(['delete', '--session', sid1])
+    cleanGeminiSessions(reuseDir)
+    rmSync(reuseDir, { recursive: true, force: true })
+  })
+
+  it('㉞ recursive self-reference guard blocks self-targeted commands', async () => {
+    const recurDir = mkdtempSync(join(tmpdir(), 'subagent-gemini-recur-'))
+    const { json: r1 } = await cli(['open', '-s', 'gemini', '--cwd', recurDir], 300_000)
+    assert.equal(r1.success, true)
+    const sid = r1.data.session
+
+    const env = { SUBAGENT_CLI_SESSION: sid }
+
+    const { json: selfPrompt } = await cli(['prompt', 'hi', '--session', sid], 30_000, env)
+    assert.equal(selfPrompt.success, false)
+    assert.equal(selfPrompt.data.error, 'RECURSIVE_SELF_REFERENCE')
+
+    const { json: selfOpen } = await cli(['open', '-s', 'gemini', '--cwd', recurDir, '--session', sid], 30_000, env)
+    assert.equal(selfOpen.success, false)
+    assert.equal(selfOpen.data.error, 'RECURSIVE_SELF_REFERENCE')
+
+    const { json: selfClose } = await cli(['close', '--session', sid], 30_000, env)
+    assert.equal(selfClose.success, false)
+    assert.equal(selfClose.data.error, 'RECURSIVE_SELF_REFERENCE')
+
+    const { json: other } = await cli(['status', '--session', 'nonexistent-other'], 30_000, env)
+    assert.notEqual(other.data?.error, 'RECURSIVE_SELF_REFERENCE')
+
+    console.log(`    Self-ref guard blocked prompt/open/close on ${sid}`)
+
+    await cli(['close', '--session', sid])
+    await cli(['delete', '--session', sid])
+    cleanGeminiSessions(recurDir)
+    rmSync(recurDir, { recursive: true, force: true })
   })
 
   after(async () => {

@@ -14,7 +14,18 @@ export interface SubagentConfig {
 export interface AppConfig {
   home?: string   // override home dir, default = ~/.subagent-cli
   port: number
-  idle: { timeout: number; check_interval: number; manager_timeout?: number }
+  idle: {
+    timeout: number
+    check_interval: number
+    manager_timeout?: number
+    /** Reuse cooldown ratio: session must be idle for >= timeout * ratio to be reused */
+    reuse_ratio?: number
+    /** Make --reuse the default behavior for `open` */
+    fast_reuse?: boolean
+    /** When a recursive subagent-cli call (inside another session) invokes `open` without explicit reuse,
+     *  default to reuse=true (excluding the caller's own session). Default: false. */
+    recursive_reuse?: boolean
+  }
   terminal: { cols: number; rows: number; scrollback: number }
   subagents: Record<string, SubagentConfig>
 }
@@ -25,6 +36,11 @@ const paths = {
   config: join(homedir(), '.subagent-cli', 'config.json'),
 }
 
+/** Apply a home dir override (used when an in-memory config is passed without loadConfig). */
+export function applyHome(home?: string): void {
+  if (home) paths.home = join(home)
+}
+
 /** Override config file path. Called by CLI -c/--config before any loadConfig(). */
 export function setConfigPath(filePath: string): void {
   paths.config = resolve(filePath)
@@ -32,7 +48,7 @@ export function setConfigPath(filePath: string): void {
 
 const DEFAULTS: Omit<AppConfig, 'home'> = {
   port: 7100,
-  idle: { timeout: 300, check_interval: 30, manager_timeout: 120 },
+  idle: { timeout: 300, check_interval: 30, manager_timeout: 120, reuse_ratio: 0.5, fast_reuse: false },
   terminal: { cols: 220, rows: 50, scrollback: 5000 },
   subagents: {
     haiku: {
