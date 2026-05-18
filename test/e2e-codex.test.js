@@ -1,4 +1,22 @@
-const { describe, it, after } = require('node:test')
+const { describe, it: _it, after } = require('node:test')
+
+// Wrapper: log START before / DONE|FAIL after with elapsed seconds (stderr stays out of TAP)
+const it = (name, optsOrFn, maybeFn) => {
+  const fn = typeof optsOrFn === 'function' ? optsOrFn : maybeFn
+  const opts = typeof optsOrFn === 'function' ? undefined : optsOrFn
+  const wrapped = async (t) => {
+    process.stderr.write(`\n>>> START: ${name}\n`)
+    const t0 = Date.now()
+    try {
+      await fn(t)
+      process.stderr.write(`<<< DONE:  ${name} (${((Date.now() - t0) / 1000).toFixed(1)}s)\n`)
+    } catch (e) {
+      process.stderr.write(`<<< FAIL:  ${name} (${((Date.now() - t0) / 1000).toFixed(1)}s)\n`)
+      throw e
+    }
+  }
+  return opts ? _it(name, opts, wrapped) : _it(name, wrapped)
+}
 const assert = require('node:assert/strict')
 const { execFile, execSync } = require('child_process')
 const { join } = require('path')

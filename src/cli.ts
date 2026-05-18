@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 import { program } from 'commander'
-import { setConfigPath, loadConfig } from './config'
+import { setConfigPath } from './config'
 import { SubagentClient } from './client'
-import { probePort, forkDaemonAndWait, readDaemonInfo, clearDaemonInfo, isProcessAlive } from './daemon_lifecycle'
 
 declare const __VERSION__: string
 
@@ -69,9 +68,6 @@ Home:   ~/.subagent-cli/             (override with config.home field)
 Debug:  http://localhost:<port>/viewer
 `)
 
-// Lazy client — created after -c hook runs
-function client(): SubagentClient { return new SubagentClient() }
-
 // Write JSON to stdout with delimiters and wait for flush before returning
 const JSON_DELIM = '=====SUBAGENT_JSON====='
 
@@ -88,7 +84,8 @@ program
   .command('subagents')
   .description('List available subagents')
   .action(async () => {
-    await output(await client().getSubagents())
+    const c = await SubagentClient.getInstance()
+    await output(await c.getSubagents())
   })
 
 program
@@ -97,7 +94,8 @@ program
   .option('--cwd <dir>', 'Filter by working directory')
   .option('--status <state>', 'Filter by state (e.g. IDLE, RUNNING, ASKING, CLOSED)')
   .action(async (opts) => {
-    await output(await client().getSessions(opts.cwd, opts.status))
+    const c = await SubagentClient.getInstance()
+    await output(await c.getSessions(opts.cwd, opts.status))
   })
 
 program
@@ -110,9 +108,10 @@ program
   .option('--reuse', 'Reuse most-recent idle/closed session with same cwd+subagent (use --no-reuse to opt out when fast_reuse=true)')
   .option('--timeout <seconds>', 'Startup timeout in seconds (overrides config)')
   .action(async (text, opts) => {
-    await output(await client().open({
+    const c = await SubagentClient.getInstance()
+    await output(await c.open({
       subagent: opts.subagent,
-      cwd: opts.cwd,
+      cwd: opts.cwd ?? process.cwd(),
       session: opts.session,
       role: opts.role,
       prompt: text,
@@ -127,7 +126,8 @@ program
   .requiredOption('--session <id>', 'Session ID')
   .option('--timeout <seconds>', 'Task timeout in seconds (0 = no timeout)', '0')
   .action(async (text, opts) => {
-    await output(await client().prompt(opts.session, text, Number(opts.timeout)))
+    const c = await SubagentClient.getInstance()
+    await output(await c.prompt(opts.session, text, Number(opts.timeout)))
   })
 
 program
@@ -137,7 +137,8 @@ program
   .option('--timeout <seconds>', 'Task timeout in seconds (0 = no timeout)', '0')
   .option('-f, --force', 'Skip state check, send key regardless of internal state')
   .action(async (text, opts) => {
-    await output(await client().approve(opts.session, text, Number(opts.timeout), opts.force))
+    const c = await SubagentClient.getInstance()
+    await output(await c.approve(opts.session, text, Number(opts.timeout), opts.force))
   })
 
 program
@@ -147,7 +148,8 @@ program
   .option('--timeout <seconds>', 'Task timeout in seconds (0 = no timeout)', '0')
   .option('-f, --force', 'Skip state check, send key regardless of internal state')
   .action(async (text, opts) => {
-    await output(await client().reject(opts.session, text, Number(opts.timeout), opts.force))
+    const c = await SubagentClient.getInstance()
+    await output(await c.reject(opts.session, text, Number(opts.timeout), opts.force))
   })
 
 program
@@ -157,7 +159,8 @@ program
   .option('--timeout <seconds>', 'Task timeout in seconds (0 = no timeout)', '0')
   .option('-f, --force', 'Skip state check, send key regardless of internal state')
   .action(async (opts) => {
-    await output(await client().allow(opts.session, Number(opts.timeout), opts.force))
+    const c = await SubagentClient.getInstance()
+    await output(await c.allow(opts.session, Number(opts.timeout), opts.force))
   })
 
 program
@@ -166,7 +169,8 @@ program
   .requiredOption('--session <id>', 'Session ID')
   .option('--off', 'Disable auto-approve')
   .action(async (opts) => {
-    await output(await client().auto(opts.session, !opts.off))
+    const c = await SubagentClient.getInstance()
+    await output(await c.auto(opts.session, !opts.off))
   })
 
 program
@@ -174,7 +178,8 @@ program
   .description('Get session status')
   .requiredOption('--session <id>', 'Session ID')
   .action(async (opts) => {
-    await output(await client().status(opts.session))
+    const c = await SubagentClient.getInstance()
+    await output(await c.status(opts.session))
   })
 
 program
@@ -185,7 +190,8 @@ program
   .option('--timeout <seconds>', 'Timeout for --wait polling (0 = no timeout)', '0')
   .option('--output <type>', 'Include output when target state reached (screen|history|last)')
   .action(async (opts) => {
-    await output(await client().check(opts.session, opts.wait, Number(opts.timeout), opts.output))
+    const c = await SubagentClient.getInstance()
+    await output(await c.check(opts.session, opts.wait, Number(opts.timeout), opts.output))
   })
 
 program
@@ -194,7 +200,8 @@ program
   .requiredOption('--session <id>', 'Session ID')
   .option('--type <type>', 'Output type: screen | history | last', 'screen')
   .action(async (opts) => {
-    await output(await client().output(opts.session, opts.type))
+    const c = await SubagentClient.getInstance()
+    await output(await c.output(opts.session, opts.type))
   })
 
 program
@@ -202,7 +209,8 @@ program
   .description('Cancel a running task')
   .requiredOption('--session <id>', 'Session ID')
   .action(async (opts) => {
-    await output(await client().cancel(opts.session))
+    const c = await SubagentClient.getInstance()
+    await output(await c.cancel(opts.session))
   })
 
 program
@@ -210,7 +218,8 @@ program
   .description('Gracefully exit the sub-agent process')
   .requiredOption('--session <id>', 'Session ID')
   .action(async (opts) => {
-    await output(await client().exit(opts.session))
+    const c = await SubagentClient.getInstance()
+    await output(await c.exit(opts.session))
   })
 
 program
@@ -218,10 +227,11 @@ program
   .description('Close session(s), keep history')
   .option('--session <id>', 'Session ID (omit to close all)')
   .action(async (opts) => {
+    const c = await SubagentClient.getInstance()
     if (opts.session) {
-      await output(await client().close(opts.session))
+      await output(await c.close(opts.session))
     } else {
-      await output(await client().closeAll())
+      await output(await c.closeAll())
     }
   })
 
@@ -232,12 +242,13 @@ program
   .option('--closed', 'Delete all closed sessions')
   .option('--all', 'Close active sessions and delete all')
   .action(async (opts) => {
+    const c = await SubagentClient.getInstance()
     if (opts.all) {
-      await output(await client().deleteAll())
+      await output(await c.deleteAll())
     } else if (opts.closed) {
-      await output(await client().deleteClosed())
+      await output(await c.deleteClosed())
     } else if (opts.session) {
-      await output(await client().delete(opts.session))
+      await output(await c.delete(opts.session))
     } else {
       await output({ success: false, data: { error: 'INVALID_STATE', message: 'Specify --session <id>, --closed, or --all' } })
     }
@@ -248,55 +259,19 @@ program
   .description('Manage the App daemon: start | stop | status')
   .option('--port <port>', 'Override daemon port (default: config.json port)')
   .action(async (action, opts) => {
-    const config = loadConfig()
-    const info = readDaemonInfo()
-    const live = info && isProcessAlive(info.pid) ? info : undefined
-
     if (action === 'start') {
-      // Single instance: a live daemon (on any port) blocks a new start
-      if (live) {
-        await output({ success: true, code: 200, data: { status: 'already_running', port: live.port, pid: live.pid } })
-        return
-      }
-      if (info) clearDaemonInfo() // stale info from a dead process
-      const port = opts.port ? Number(opts.port) : config.port
-      await forkDaemonAndWait(port)
-      await output({ success: true, code: 200, data: { status: 'started', port } })
+      const c = await SubagentClient.getInstance({ port: opts.port ? Number(opts.port) : undefined })
+      await output(c.startResult())
       return
     }
-
     if (action === 'status') {
-      const running = !!live && await probePort(live.port)
-      await output({ success: true, code: 200, data: { running, port: live?.port, pid: live?.pid } })
+      await output(await SubagentClient.status())
       return
     }
-
     if (action === 'stop') {
-      if (!live) {
-        if (info) clearDaemonInfo()
-        await output({ success: true, code: 200, data: { status: 'not_running' } })
-        return
-      }
-      try {
-        await fetch(`http://localhost:${live.port}/api/shutdown`, { method: 'POST' })
-      } catch { /* daemon may close the socket before responding — fall through to wait */ }
-      const stopped = await Array.from({ length: 50 }).reduce<Promise<boolean>>(async (prev) => {
-        if (await prev) return true
-        await new Promise(r => setTimeout(r, 100))
-        return !(await probePort(live.port))
-      }, Promise.resolve(false))
-      if (stopped) {
-        clearDaemonInfo()
-        await output({ success: true, code: 200, data: { status: 'stopped', port: live.port } })
-        return
-      }
-      await output({
-        success: false, code: 500,
-        data: { error: 'STOP_FAILED', message: `Daemon (pid ${live.pid}, port ${live.port}) did not stop. Kill manually: kill ${live.pid}` },
-      })
+      await output(await new SubagentClient().stop())
       return
     }
-
     await output({ success: false, code: 400, data: { error: 'INVALID_STATE', message: `Unknown daemon action: ${action} (use start|stop|status)` } })
   })
 

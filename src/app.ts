@@ -2,14 +2,19 @@ import Koa from 'koa'
 import Router from '@koa/router'
 import { createServer, type Server } from 'http'
 import { WebSocketServer, WebSocket } from 'ws'
-import { readFileSync, writeFileSync, rmSync, readdirSync, existsSync, mkdirSync } from 'fs'
+import { readFileSync, writeFileSync, rmSync, readdirSync, existsSync, mkdirSync, unlinkSync, statSync } from 'fs'
 import { join } from 'path'
 import { randomBytes } from 'crypto'
 import { loadConfig, ensureDirs, getHome, applyHome, type AppConfig } from './config'
-import { createAdapter, SubagentCliAdapter } from './adapter'
+import { createAdapter, parseIpcUuid, SubagentCliAdapter } from './adapter'
 import { PtyXterm } from './pty_xterm'
-import { writeDaemonInfo, clearDaemonInfo } from './daemon_lifecycle'
 import type { OpenParams } from './types'
+import { VIEWER_HTML, renderViewerIndex, renderSessionRow } from './viewer_template'
+
+// Daemon registry file — `<pid>,<port>` single line. Written on start, cleared on shutdown.
+// Client side reads/parses this file directly (see src/client.ts); no shared module is needed
+// for two write operations on the daemon side.
+const daemonPidPath = (): string => join(getHome(), 'daemon.pid')
 
 // Load all adapters (self-register)
 import './adapters/claude_code'
@@ -22,6 +27,7 @@ export { ClaudeCodeAdapter } from './adapters/claude_code'
 export { CodexAdapter } from './adapters/codex'
 export { GeminiCliAdapter } from './adapters/gemini_cli'
 export { SubagentClient } from './client'
+export { parseIpcUuid } from './adapter'
 // Augment Koa request with parsed body
 declare module 'koa' {
   interface Request {
@@ -72,14 +78,21 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
   function persistSession(id: string, params: OpenParams, resumeId?: string): void {
     const dir = sessionDir(id)
     mkdirSync(dir, { recursive: true })
+    const cfgFile = join(dir, 'config.json')
+    const prev = existsSync(cfgFile) ? JSON.parse(readFileSync(cfgFile, 'utf-8')) : {}
     const meta: Record<string, unknown> = {
       subagent: params.subagent, adapter: params.adapter,
       cwd: params.cwd, command: params.command,
       args: params.args, env: params.env,
-      created_at: new Date().toISOString(),
+      created_at: prev.created_at ?? new Date().toISOString(),
     }
-    if (resumeId) meta.resume_id = resumeId
-    writeFileSync(join(dir, 'config.json'), JSON.stringify(meta, null, 2) + '\n')
+    const finalResume = resumeId ?? prev.resume_id
+    if (finalResume) meta.resume_id = finalResume
+    const finalIpc = params.ipc_path ?? prev.ipc_path
+    if (finalIpc) meta.ipc_path = finalIpc
+    const finalRole = params.role ?? prev.role
+    if (finalRole) meta.role = finalRole
+    writeFileSync(cfgFile, JSON.stringify(meta, null, 2) + '\n')
     const historyFile = join(dir, 'history.md')
     if (!existsSync(historyFile)) {
       writeFileSync(historyFile, `# Session ${id} — ${params.subagent}\n\n`)
@@ -89,6 +102,13 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
   function deleteSessionDir(id: string): void {
     const dir = sessionDir(id)
     if (existsSync(dir)) rmSync(dir, { recursive: true, force: true })
+  }
+
+  /** Last-activity timestamp = mtime of history.md (only meaningful interactions touch it,
+   *  so TUI cursor blinks / status-bar refreshes don't pollute it like in-memory PTY tracking does). */
+  function sessionLastAt(id: string): number {
+    const f = join(sessionDir(id), 'history.md')
+    try { return statSync(f).mtimeMs } catch { return 0 }
   }
 
   /**
@@ -107,6 +127,7 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
     timeout: number,
     inlinePrompt?: string,
     excludeSession?: string,
+    callerIpcPath = '',
   ): Promise<Record<string, unknown> | null> {
     const ratio = config.idle.reuse_ratio ?? 0.5
     const minIdleMs = config.idle.timeout * 1000 * ratio
@@ -114,9 +135,11 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
 
     // ① Active IDLE candidates, cooled down, oldest lastActivity first
     // excludeSession filter prevents recursive subagent-cli calls from reusing their own parent session
+    // ipc_path filter enforces window-scoped reuse (callers from window A cannot reuse window B's session)
     const activeCandidates = Array.from(sessions.entries())
       .filter(([id, a]) => {
         if (excludeSession && id === excludeSession) return false
+        if ((a.getIpcPath() ?? '') !== callerIpcPath) return false
         const s = a.status()
         const p = a.getParams()
         const idleAge = now - (lastActivity.get(id) ?? now)
@@ -151,6 +174,7 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
           const saved = JSON.parse(readFileSync(cfgFile, 'utf-8'))
           if (saved.cwd !== cwd || saved.subagent !== subagentName
               || saved.adapter !== adapterName || !saved.resume_id) return null
+          if ((saved.ipc_path ?? '') !== callerIpcPath) return null
           return { id, saved }
         } catch { return null }
       })
@@ -169,6 +193,8 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
       subagent: saved.subagent as string, adapter: adapterName,
       cwd: saved.cwd as string, command: saved.command as string,
       args, env,
+      ...(saved.ipc_path ? { ipc_path: saved.ipc_path as string } : {}),
+      ...(saved.role ? { role: saved.role as string } : {}),
     }
     sessions.set(id, adapter)
     trackActivity(id, adapter)
@@ -233,6 +259,40 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
     return adapter
   }
 
+  /** Read X-Subagent-Cli-IPC request header; empty string means "non-VS Code caller". */
+  function getCallerIpc(ctx: Koa.Context): string {
+    return (ctx.headers['x-subagent-cli-ipc'] as string | undefined) ?? ''
+  }
+
+  /** Read ipc_path from a persisted session config.json (for closed/disk sessions). */
+  function diskSessionIpc(id: string): string {
+    const cfgFile = join(sessionDir(id), 'config.json')
+    if (!existsSync(cfgFile)) return ''
+    try {
+      const saved = JSON.parse(readFileSync(cfgFile, 'utf-8'))
+      return (saved.ipc_path as string | undefined) ?? ''
+    } catch { return '' }
+  }
+
+  // ── Window ownership middleware (single-session routes) ──
+  // Window-scope access on `/api/session/:id/*` routes.
+  // - caller header empty → CLI/admin: full access to every session
+  // - caller header set + session ipc set + values equal → allow (same window)
+  // - caller header set + mismatch (incl. session ipc empty) → 403 WINDOW_MISMATCH
+  router.use('/session/:id', async (ctx, next) => {
+    const id = ctx.params.id
+    const adapter = sessions.get(id)
+    const sessionIpc = adapter ? (adapter.getIpcPath() ?? '') : diskSessionIpc(id)
+    // For brand-new sessions or non-existent ids we let the route handler return 404
+    if (!adapter && !sessionIpc) return next()
+    const callerIpc = getCallerIpc(ctx)
+    if (callerIpc !== '' && callerIpc !== sessionIpc) {
+      fail(ctx, 403, 'WINDOW_MISMATCH', `Session ${id} is bound to a different window`)
+      return
+    }
+    return next()
+  })
+
   // GET /api/subagents
   router.get('/subagents', (ctx) => {
     const list = Object.entries(config.subagents).map(([name, cfg]) => ({
@@ -245,9 +305,11 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
   router.get('/sessions', (ctx) => {
     const cwdFilter = ctx.query.cwd as string | undefined
     const statusFilter = ctx.query.status as string | undefined
+    const callerIpc = getCallerIpc(ctx)
 
     const active = Array.from(sessions.entries())
-      .map(([id, adapter]) => ({ session: id, ...adapter.status(), prompts: adapter.getPrompts() }))
+      .filter(([, adapter]) => callerIpc === '' || (adapter.getIpcPath() ?? '') === callerIpc)
+      .map(([id, adapter]) => ({ session: id, ...adapter.status(), prompts: adapter.getPrompts(), last_at: sessionLastAt(id) }))
 
     const sessDir = join(getHome(), 'sessions')
     const closed = existsSync(sessDir)
@@ -257,13 +319,16 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
           const cfgFile = join(sessDir, id, 'config.json')
           if (!existsSync(cfgFile)) return null
           const saved = JSON.parse(readFileSync(cfgFile, 'utf-8'))
+          if (callerIpc !== '' && (saved.ipc_path ?? '') !== callerIpc) return null
           return {
             session: id, state: 'CLOSED' as const,
             subagent: saved.subagent, adapter: saved.adapter,
             cwd: saved.cwd, created_at: saved.created_at, prompts: [] as string[],
+            role: (saved.role as string | undefined) ?? '',
+            last_at: sessionLastAt(id),
           }
         })
-        .filter(Boolean) as Array<{ session: string; state: string; subagent: string; adapter: string; cwd: string; created_at: string; prompts: string[] }>
+        .filter(Boolean) as Array<{ session: string; state: string; subagent: string; adapter: string; cwd: string; created_at: string; prompts: string[]; role: string; last_at: number }>
       : []
 
     const all = [...active, ...closed]
@@ -297,6 +362,8 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
       const params: OpenParams = {
         subagent: saved.subagent, adapter: subCfg.adapter,
         cwd: saved.cwd, command: subCfg.command, args, env,
+        ...(saved.ipc_path ? { ipc_path: saved.ipc_path as string } : {}),
+        ...(saved.role ? { role: saved.role as string } : {}),
       }
       if (!existsSync(params.cwd)) { fail(ctx, 400, 'INVALID_STATE', `Working directory does not exist: ${params.cwd}`); return }
       sessions.set(sessionId, adapter)
@@ -330,8 +397,9 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
     // ── Reuse logic ──
     const excludeSession = body.exclude_session as string | undefined
     const reuseEnabled = (body.reuse as boolean | undefined) ?? config.idle.fast_reuse ?? false
+    const bodyIpcPath = body.ipc_path as string | undefined
     if (reuseEnabled) {
-      const reused = await tryReuseSession(cwd, subagentName, subCfg.adapter, timeout, body.prompt as string | undefined, excludeSession)
+      const reused = await tryReuseSession(cwd, subagentName, subCfg.adapter, timeout, body.prompt as string | undefined, excludeSession, bodyIpcPath ?? '')
       if (reused) { ok(ctx, reused); return }
     }
 
@@ -344,6 +412,7 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
       subagent: subagentName, adapter: subCfg.adapter,
       cwd, command: subCfg.command, args: subCfg.args, env,
       ...(role ? { role } : {}),
+      ...(bodyIpcPath ? { ipc_path: bodyIpcPath } : {}),
     }
     sessions.set(id, adapter)
     trackActivity(id, adapter)
@@ -364,9 +433,7 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
       sessions.delete(id)
       lastActivity.delete(id)
       closeViewerSockets(id)
-      // Persist any session ID parsed from exit output
-      const sid = adapter.getSessionId()
-      if (sid) persistSession(id, params, sid)
+      persistSession(id, params, adapter.getSessionId())
     })
     persistSession(id, params, adapter.getSessionId())
     console.error(`[open] persisted, sending ok for ${id}`)
@@ -502,10 +569,10 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
   router.post('/session/:id/exit', async (ctx) => {
     const adapter = getAdapter(ctx); if (!adapter) return
     await adapter.exit()
-    // Persist resume_id parsed from exit output (for future resume)
-    const resumeId = adapter.getSessionId()
-    if (resumeId) persistSession(ctx.params.id, adapter.getParams(), resumeId)
+    // Persist resume_id parsed from exit output (last_at is derived from history.md mtime at read time)
+    persistSession(ctx.params.id, adapter.getParams(), adapter.getSessionId())
     sessions.delete(ctx.params.id)
+    lastActivity.delete(ctx.params.id)
     closeViewerSockets(ctx.params.id)
     ok(ctx, { session: ctx.params.id, status: 'exited' })
     checkAutoExit()
@@ -515,10 +582,10 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
   router.post('/session/:id/close', async (ctx) => {
     const adapter = getAdapter(ctx); if (!adapter) return
     await adapter.close()
-    // Persist resume_id if captured during graceful close
-    const resumeId = adapter.getSessionId()
-    if (resumeId) persistSession(ctx.params.id, adapter.getParams(), resumeId)
+    // resume_id only if captured during graceful close; last_at = history.md mtime, read on demand
+    persistSession(ctx.params.id, adapter.getParams(), adapter.getSessionId())
     sessions.delete(ctx.params.id)
+    lastActivity.delete(ctx.params.id)
     closeViewerSockets(ctx.params.id)
     ok(ctx, { session: ctx.params.id, status: 'closed' })
     checkAutoExit()
@@ -543,10 +610,12 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
 
   // DELETE /api/sessions/closed (batch delete closed sessions)
   router.del('/sessions/closed', (ctx) => {
+    const callerIpc = getCallerIpc(ctx)
     const sessDir = join(getHome(), 'sessions')
     const deleted = existsSync(sessDir)
       ? readdirSync(sessDir)
         .filter(id => !sessions.has(id))
+        .filter(id => callerIpc === '' || diskSessionIpc(id) === callerIpc)
         .map(id => { deleteSessionDir(id); return id })
       : []
     ok(ctx, { deleted })
@@ -554,33 +623,41 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
 
   // DELETE /api/sessions/all (close active + delete all)
   router.del('/sessions/all', async (ctx) => {
+    const callerIpc = getCallerIpc(ctx)
     const deleted: string[] = []
-    await Promise.all(Array.from(sessions.entries()).map(async ([id, adapter]) => {
+    const targets = Array.from(sessions.entries())
+      .filter(([, adapter]) => callerIpc === '' || (adapter.getIpcPath() ?? '') === callerIpc)
+    await Promise.all(targets.map(async ([id, adapter]) => {
       await adapter.close()
       closeViewerSockets(id)
       deleted.push(id)
+      sessions.delete(id)
     }))
-    sessions.clear()
     const sessDir = join(getHome(), 'sessions')
-    existsSync(sessDir) && readdirSync(sessDir).forEach(id => {
-      deleteSessionDir(id)
-      !deleted.includes(id) && deleted.push(id)
-    })
+    existsSync(sessDir) && readdirSync(sessDir)
+      .filter(id => callerIpc === '' || diskSessionIpc(id) === callerIpc)
+      .forEach(id => {
+        deleteSessionDir(id)
+        !deleted.includes(id) && deleted.push(id)
+      })
     ok(ctx, { deleted })
     checkAutoExit()
   })
 
   // POST /api/close (close all, keep dirs)
   router.post('/close', async (ctx) => {
+    const callerIpc = getCallerIpc(ctx)
     const closed: string[] = []
-    await Promise.all(Array.from(sessions.entries()).map(async ([id, adapter]) => {
+    const targets = Array.from(sessions.entries())
+      .filter(([, adapter]) => callerIpc === '' || (adapter.getIpcPath() ?? '') === callerIpc)
+    await Promise.all(targets.map(async ([id, adapter]) => {
       await adapter.close()
-      const resumeId = adapter.getSessionId()
-      if (resumeId) persistSession(id, adapter.getParams(), resumeId)
+      persistSession(id, adapter.getParams(), adapter.getSessionId())
       closeViewerSockets(id)
       closed.push(id)
+      sessions.delete(id)
+      lastActivity.delete(id)
     }))
-    sessions.clear()
     ok(ctx, { closed })
     checkAutoExit()
   })
@@ -599,7 +676,7 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
       sessions.clear()
       wss.close()
       httpServer.close()
-      clearDaemonInfo()
+      existsSync(daemonPidPath()) && unlinkSync(daemonPidPath())
       onExit(0)
     }, 50)
   })
@@ -616,77 +693,28 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
         ctx.body = VIEWER_HTML
       } else {
         ctx.type = 'html'
-        const activeItems = Array.from(sessions.entries()).map(([id, a]) => {
+        const activeRows = Array.from(sessions.entries()).map(([id, a]) => {
           const s = a.status()
-          return `<li><a href="/viewer?session=${id}" target="_blank">${id}</a> — ${s.subagent} (${s.state})</li>`
+          return renderSessionRow({ id, subagent: s.subagent, cwd: s.cwd, role: s.role, state: s.state, lastAt: sessionLastAt(id), closed: false })
         })
         const sessDir = join(getHome(), 'sessions')
-        const closedItems = existsSync(sessDir)
+        const closedRows = existsSync(sessDir)
           ? readdirSync(sessDir)
             .filter(id => !sessions.has(id))
             .map(id => {
               const cfgFile = join(sessDir, id, 'config.json')
               if (!existsSync(cfgFile)) return ''
               const saved = JSON.parse(readFileSync(cfgFile, 'utf-8'))
-              return `<li style="opacity:0.5">${id} — ${saved.subagent ?? 'unknown'} (CLOSED)</li>`
+              return renderSessionRow({ id, subagent: saved.subagent ?? '', cwd: saved.cwd ?? '', role: saved.role ?? '', state: 'CLOSED', lastAt: sessionLastAt(id), closed: true })
             })
             .filter(Boolean)
           : []
-        const items = [...activeItems, ...closedItems].join('\n')
-        ctx.body = `<!DOCTYPE html><html><body><h1>Sessions</h1><ul>${items}</ul></body></html>`
+        ctx.body = renderViewerIndex([...activeRows, ...closedRows].join('\n'))
       }
     } else {
       await next()
     }
   })
-
-  const VIEWER_HTML = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>subagent-cli debug viewer</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #1a1a2e; font-family: 'SF Mono', 'Fira Code', monospace; height: 100vh; display: flex; flex-direction: column; }
-    .header { background: #16213e; color: #7B61FF; padding: 8px 16px; font-size: 13px; border-bottom: 1px solid #0f3460; display: flex; align-items: center; gap: 8px; }
-    .dot { width: 8px; height: 8px; border-radius: 50%; background: #00ff88; animation: pulse 2s infinite; }
-    @keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:0.3 } }
-    #terminal { flex: 1; padding: 4px; }
-  </style>
-</head>
-<body>
-  <div class="header"><span class="dot"></span> subagent-cli debug viewer — session: <span id="sid"></span></div>
-  <div id="terminal"></div>
-  <script type="module">
-    import { Terminal } from 'https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/+esm'
-    import * as FitAddon from 'https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/+esm'
-    const session = new URLSearchParams(location.search).get('session') || 'unknown'
-    document.getElementById('sid').textContent = session
-    const term = new Terminal({
-      theme: { background: '#1a1a2e', foreground: '#e0e0e0', cursor: '#7B61FF' },
-      fontFamily: "'SF Mono', 'Fira Code', monospace", fontSize: 13,
-      cursorBlink: true, scrollback: 10000,
-    })
-    const fitAddon = new FitAddon.FitAddon()
-    term.loadAddon(fitAddon)
-    term.open(document.getElementById('terminal'))
-    let ws
-    function connect() {
-      ws = new WebSocket('ws://' + location.host + '/ws?session=' + session)
-      ws.onopen = () => { const dot = document.querySelector('.dot'); dot.style.background = '#44ff44'; dot.style.animation = 'pulse 2s infinite'; fitAddon.fit(); sendResize() }
-      ws.onmessage = (e) => term.write(e.data)
-      ws.onclose = () => { const dot = document.querySelector('.dot'); dot.style.background = '#ff4444'; dot.style.animation = 'none'; term.write('\\r\\n\\x1b[33m[reconnecting...]\\x1b[0m\\r\\n'); setTimeout(connect, 2000) }
-    }
-    connect()
-    term.onData((data) => { if (ws && ws.readyState === 1) ws.send(data) })
-    function sendResize() { if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows })) }
-    term.onResize(() => sendResize())
-    window.addEventListener('resize', () => fitAddon.fit())
-    term.focus()
-  </script>
-</body>
-</html>`
 
   // ── WebSocket ──
 
@@ -699,6 +727,18 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
     if (!sessionId) { ws.close(4000, 'Missing session parameter'); return }
     const adapter = sessions.get(sessionId)
     if (!adapter) { ws.close(4004, 'Session not found'); return }
+    // Window-scope check: if a client identifies itself with `client=<UUID>_<n>`,
+    // the prefix UUID must match the session's ipc_path — this isolates other
+    // VS Code windows' extensions. A clientless connection (browser /viewer) is a
+    // legitimate local read-only observer and is allowed through so PTY broadcast
+    // stays visible on both ends, as the design requires.
+    const sessionIpc = adapter.getIpcPath()
+    if (sessionIpc) {
+      const expectedUuid = parseIpcUuid(sessionIpc)
+      const clientId = url.searchParams.get('client') ?? ''
+      const clientUuid = clientId.split('_')[0]
+      if (clientId && clientUuid !== expectedUuid) { ws.close(4003, 'WINDOW_MISMATCH'); return }
+    }
     ;(ws as any)._sessionId = sessionId
 
 
@@ -743,8 +783,7 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
       .forEach(([id, adapter]) => {
         console.error(`Idle timeout: session ${id} (${Math.round((now - (lastActivity.get(id) ?? now)) / 1000)}s)`)
         adapter.close().then(() => {
-          const resumeId = adapter.getSessionId()
-          if (resumeId) persistSession(id, adapter.getParams(), resumeId)
+          persistSession(id, adapter.getParams(), adapter.getSessionId())
         }).catch(err => console.error(`[idle-close] ${id}:`, err))
         sessions.delete(id)
         lastActivity.delete(id)
@@ -769,7 +808,7 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
       console.error(`No sessions for ${MANAGER_IDLE / 1000}s. Manager exiting.`)
       clearInterval(idleTimer)
       httpServer.close()
-      clearDaemonInfo()
+      existsSync(daemonPidPath()) && unlinkSync(daemonPidPath())
       onExit(0)
     }, MANAGER_IDLE)
   }
@@ -796,7 +835,7 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
   async function start(): Promise<void> {
     await preflight()
     httpServer.listen(config.port, () => {
-      writeDaemonInfo(process.pid, config.port)
+      writeFileSync(daemonPidPath(), `${process.pid},${config.port}`)
       console.error(`App listening on http://localhost:${config.port}`)
       console.error(`Debug viewer: http://localhost:${config.port}/viewer`)
     })

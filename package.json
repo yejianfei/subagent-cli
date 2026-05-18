@@ -16,7 +16,7 @@
     "build": "webpack --mode production",
     "dev": "webpack --mode development",
     "watch": "webpack --mode development --watch",
-    "test": "node --test test/app.test.js test/detect.test.js test/screen.test.js test/adapter.test.js test/client.test.js",
+    "test": "node --test test/app.test.js test/detect.test.js test/screen.test.js test/adapter.test.js test/client.test.js test/ipc.test.js",
     "test:e2e:claude": "npm run build && node --test test/e2e.test.js",
     "test:e2e:codex": "npm run build && node --test test/e2e-codex.test.js",
     "test:e2e:gemini": "npm run build && node --test test/e2e-gemini.test.js",

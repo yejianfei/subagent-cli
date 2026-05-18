@@ -138,7 +138,11 @@ export class CodexAdapter extends SubagentCliAdapter {
         exit: 'quit',
       },
       match_words: ['% left', 'esc to', 'tab to queue', '· /'],
-      idle_words: ['% left', '· /'],
+      // `% left` is chrome (context-remaining indicator), NOT an idle marker — it's visible both
+      // when codex is streaming and when codex is idle. Treating it as idle causes the detection
+      // engine to short-circuit PENDING → IDLE during streaming, which in turn never fires
+      // onRunning() and never sends the probe space. `· /` is the real idle prompt marker.
+      idle_words: ['· /'],
       running_words: ['esc to interrupt', 'tab to queue'],
       asking_words: ['esc to cancel'],
       probe: ' ',

@@ -130,10 +130,13 @@ describe('CodexAdapter.getAdapterDetectRules()', () => {
     assert.ok(rules.match_words.includes('esc to'))
   })
 
-  it('idle_words contain % left', () => {
+  it('idle_words use bullet prompt marker, NOT % left', () => {
+    // `% left` is chrome (context-remaining indicator) visible both during streaming
+    // and idle — treating it as an idle marker breaks the probe handshake. See codex.ts.
     const a = new TestableCodex()
     const rules = a.testGetDetectRules()
-    assert.ok(rules.idle_words.includes('% left'))
+    assert.ok(rules.idle_words.includes('· /'), 'must keep real idle marker')
+    assert.ok(!rules.idle_words.includes('% left'), 'must not treat chrome as idle')
   })
 
   it('asking_words contain esc to cancel', () => {

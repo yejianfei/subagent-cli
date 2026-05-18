@@ -59,11 +59,12 @@ async function fetchViewerSessions() {
   const port = getPort()
   const res = await fetch(`http://localhost:${port}/viewer`)
   const html = await res.text()
-  const regex = /session=([^"]+)"[^>]*>[^<]+<\/a>\s*—\s*(\w[\w-]*)\s*\((\w+)\)/g
+  // Six-column table row: <tr><td>SUB</td><td><a session=ID>SID8</a></td><td>CWD</td><td>ROLE</td><td .. data-ts>..</td><td><span state state-X>STATE</span></td></tr>
+  const regex = /<tr[^>]*><td>([^<]*)<\/td><td><a [^>]*session=([^"&]+)[^>]*>[^<]*<\/a><\/td><td>[^<]*<\/td><td>[^<]*<\/td><td[^>]*>[^<]*<\/td><td><span class="state state-\w+">(\w+)<\/span><\/td><\/tr>/g
   const sessions = []
   let match
   while ((match = regex.exec(html)) !== null) {
-    sessions.push({ session: match[1], subagent: match[2], state: match[3] })
+    sessions.push({ session: match[2], subagent: match[1], state: match[3] })
   }
   return sessions
 }
@@ -641,8 +642,11 @@ describe('E2E: Single session real task', { timeout: 900_000 }, () => {
     assert.equal(json.data.status, 'closed')
   })
 
-  it('㉗ viewer: session gone; API: CLOSED', async () => {
-    await verifyViewerNoSession(sessionId)
+  it('㉗ viewer: session shows CLOSED; API: CLOSED', async () => {
+    const viewerSessions = await fetchViewerSessions()
+    const inViewer = viewerSessions.find(s => s.session === sessionId)
+    assert.ok(inViewer, 'Closed session should still appear in viewer (history view)')
+    assert.equal(inViewer.state, 'CLOSED')
     const { json } = await cli(['sessions'])
     const s = json.data.sessions.find(s => s.session === sessionId)
     assert.ok(s, 'Closed session should still appear in API')

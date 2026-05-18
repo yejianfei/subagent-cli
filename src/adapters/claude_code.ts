@@ -104,7 +104,7 @@ export class ClaudeCodeAdapter extends SubagentCliAdapter {
         explain: '\x05',             // Ctrl+E to explain
         exit: 'exit',                // /exit command
       },
-      match_words: ['❯', 'trust', 'Esc'],
+      match_words: ['❯', 'trust', 'Esc', '? for shortcuts'],
       idle_words: ['shortcuts', 'accept edits'],
       running_words: ['esc to interrupt'],
       asking_words: ['Esc to cancel', 'I trust'],

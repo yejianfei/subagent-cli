@@ -24,6 +24,20 @@ export function createAdapter(adapterName: string): SubagentCliAdapter {
   return new Ctor()
 }
 
+// ── IPC Path Helper ──
+
+/**
+ * Extract UUID from an IPC socket path so child agents and ws clients can pick it up.
+ * Canonical form: `subagent-cli_<UUID>(.sock)` — emitted by the VS Code extension.
+ * Custom paths fall back to the basename without extension.
+ */
+export function parseIpcUuid(ipcPath: string): string {
+  const canonical = ipcPath.match(/subagent-cli_([^./\\]+)/)
+  if (canonical) return canonical[1]
+  const basename = ipcPath.replace(/^.*[\\/]/, '').replace(/\.[^.]+$/, '')
+  return basename || ipcPath
+}
+
 // ── Base Class ──
 
 /**
@@ -62,6 +76,9 @@ export abstract class SubagentCliAdapter extends EventEmitter {
   /** Get the open params for this session (for persistence updates) */
   getParams(): OpenParams { return this.params }
 
+  /** Window-scope IPC path (if any) — used by daemon for ownership filtering */
+  getIpcPath(): string | undefined { return this.params?.ipc_path }
+
   /**
    * Parse the sub-agent's session ID from exit output.
    * Subclasses override with adapter-specific regex (e.g. UUID format).
@@ -95,6 +112,7 @@ export abstract class SubagentCliAdapter extends EventEmitter {
       Object.entries(merged).filter((entry): entry is [string, string] => entry[1] != null)
     )
   }
+
 
   /**
    * Unified async wait: register once(event) → run before() → await event.
@@ -200,6 +218,10 @@ export abstract class SubagentCliAdapter extends EventEmitter {
 
     const cfg = loadConfig()
     const env = this.buildEnv(params.env)
+    if (params.ipc_path) {
+      env.SUBAGENT_VSCODE_IPC = params.ipc_path
+      env.SUBAGENT_VSCODE_UUID = parseIpcUuid(params.ipc_path)
+    }
     this.terminal = new PtyXterm(cfg.terminal.cols, cfg.terminal.rows, cfg.terminal.scrollback)
     this.terminal.on('data', (chunk: string) => this.onChunk(chunk))
     this.terminal.on('exit', () => {
@@ -388,6 +410,7 @@ export abstract class SubagentCliAdapter extends EventEmitter {
       subagent: this.params.subagent,
       cwd: this.params.cwd,
       created_at: this.createdAt.toISOString(),
+      role: this.params.role ?? '',
     }
   }
 
@@ -456,6 +479,7 @@ export abstract class SubagentCliAdapter extends EventEmitter {
       subagent: this.params.subagent,
       cwd: this.params.cwd,
       created_at: this.createdAt.toISOString(),
+      role: this.params.role ?? '',
     }
   }
 
@@ -521,26 +545,29 @@ export abstract class SubagentCliAdapter extends EventEmitter {
     this.emit('data', chunk)
   }
 
-  /** Start detection polling (1000ms interval). Idempotent — safe to call multiple times. */
+  /** Start detection polling (1000ms interval). Idempotent — safe to call multiple times.
+   *
+   *  Active probe confirm-before-IDLE: for adapters with a `probe` rule (codex), when the
+   *  detection appears to say IDLE while we're currently RUNNING/PENDING, we actively write
+   *  the probe character (a space) and re-detect. The probe makes a still-busy codex
+   *  re-display "tab to queue …" → running_words hit → keep RUNNING. On a truly idle codex
+   *  the space stays in the input buffer but codex does not show the queue indicator → the
+   *  next detect is still IDLE → real transition. Residue character is cleared only at the
+   *  start of the next prompt()/approve()/etc via Ctrl+U.
+   */
   private startDetection(): void {
     if (this.detectTimer) return
     this.detectTimer = setInterval(async () => {
       if (!this.terminal) return
       await this.terminal.flush()
-      const screen = this.terminal.capture()
-      let result = this.detect(screen)
+      let result = this.detect(this.terminal.capture())
 
-      // Probe residue cleanup: when state is RUNNING but screen shows "tab to queue"
-      // without "esc to interrupt", the probe character from a previous tick may be lingering.
-      // Send Ctrl+U to clear it, then re-detect to get a clean reading.
       const rules = this.getAdapterDetectRules()
-      if (this.state === 'RUNNING' && rules.probe) {
-        if (result === 'RUNNING' && screen.includes('tab to queue') && !screen.includes('esc to interrupt')) {
-          this.terminal.write('\x15') // Ctrl+U: clear possible probe residue
-          await this.wait(300)
-          await this.terminal.flush()
-          result = this.detect(this.terminal.capture())
-        }
+      if (result === 'IDLE' && rules.probe && (this.state === 'RUNNING' || this.state === 'PENDING')) {
+        this.terminal.write(rules.probe)
+        await this.wait(500)
+        await this.terminal.flush()
+        result = this.detect(this.terminal.capture())
       }
 
       switch (result) {

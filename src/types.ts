@@ -10,6 +10,9 @@ export interface OpenParams {
   args: string[]
   env: Record<string, string>
   role?: string
+  /** Window-scope IPC socket path (Unix socket / Named Pipe). Stamps this session
+   *  with a window identity so daemon can filter/route by window. Empty = global session. */
+  ipc_path?: string
 }
 
 export interface OpenResult {
@@ -33,6 +36,7 @@ export interface SessionStatus {
   subagent: string
   cwd: string
   created_at: string
+  role: string
 }
 
 export interface OutputResult {

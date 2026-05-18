@@ -1,5 +1,51 @@
 # Changelog
 
+## [0.1.18] - 2026-05-15
+
+### Added — viewer & API alignment for VS Code extension
+
+- **`cli open --cwd` defaults to `process.cwd()`** when omitted (previously sent `undefined`, leading daemon to fall back to its own working directory — `/` under VS Code extension host). The help text "default: current dir" is now actually true.
+- **`SessionStatus.role`** is now a required `string` field (empty string when no role). `adapter.status()` / `adapter.check()` always return it; `GET /api/sessions` propagates it for both active and closed entries. No more `undefined` leaking to JSON consumers.
+- **Session `last_at` timestamp** — every session entry (active + closed) carries a ms-precision "last meaningful activity" time, derived **on demand from the mtime of `history.md`**. The file is only touched when a real interaction is recorded (prompt / approve / sub-agent reply), so TUI cursor blinks / status-bar refreshes don't pollute it. No persistence/maintenance of the field is needed; the filesystem is the source of truth.
+- **`persistSession()` is now merge-aware** — reads existing `config.json` before writing so `created_at`, `resume_id`, `ipc_path`, `role` survive partial updates. Fixes a long-standing **role-persistence bug**: previously `OpenParams.role` existed but was never written to disk, so closed sessions lost their role.
+- **`/viewer` index page** rewritten as a six-column table (`Subagent` / `Session` / `CWD` / `Role` / `Last activity` / `State`) matching the VS Code extension webview. HTML-escaped user content, a `↻` refresh button right-aligned in the header (hover background), 5-second auto-refresh that only fires while `document.visibilityState === 'visible'`, and JS-side relative-time rendering (`Xs/m/h ago`) that ticks every second. State column uses colored pill badges per `AgentState`.
+- **`open` flow now propagates `role` across all session lifecycles** — both the reuse path (line ~186) and the explicit resume-by-id path (line ~355) were silently rebuilding `OpenParams` without `role`. After the fix every path (new / reuse / resume) reads `saved.role` from the on-disk config so `adapter.params.role` stays populated. Old closed sessions whose `config.json` was written before this release have no role on disk — they intentionally display empty rather than fall back to today's `subCfg.role` (which may have diverged).
+- **`src/viewer_template.ts`** — HTML templates (`VIEWER_HTML`, `renderViewerIndex`, `renderSessionRow`, `escapeHtml`) extracted from `app.ts` into a dedicated module so routing/lifecycle code stays compact and the markup can iterate independently.
+
+### Added — Window-scope IPC scaffolding (for upcoming VS Code extension)
+
+Foundation for multi-window isolation, validated via mock IPC harness — no real extension integration yet. Backwards-compatible: when no `SUBAGENT_VSCODE_IPC` env / `X-Subagent-Cli-IPC` header is present, all behaviour matches v0.1.17.
+
+- **`OpenParams.ipc_path`** — optional field stamping a session with the originating window's IPC socket path. Persisted in `~/.subagent-cli/sessions/<id>/config.json` and restored on resume.
+- **`SUBAGENT_VSCODE_IPC` / `SUBAGENT_VSCODE_UUID` env injection** — when a session is opened with `ipc_path`, the spawned sub-agent process receives both vars so recursive `subagent-cli` calls inside the sub-agent route back to the same window.
+- **`X-Subagent-Cli-IPC` request header** — `SubagentClient` automatically attaches it in VS Code mode; daemon uses it to enforce per-window access.
+- **Window ownership middleware** in App daemon — asymmetric privilege model:
+  - **Header-less caller** (CLI / curl / scripts) = **admin**: full access to every session including window-bound ones (`/api/session/:id/*`, `GET /api/sessions`, batch `close` / `delete --closed` / `delete --all` all see and act on the entire registry).
+  - **Header-set caller** (a VS Code extension) is sandboxed to its own window: routes return 403 `WINDOW_MISMATCH` on cross-window single-session access; list/batch routes only include sessions whose `ipc_path` matches the header.
+  - `tryReuseSession` — reuse candidates strictly matched by `ipc_path` to prevent cross-window leakage (no admin override here — reuse is an open-time UX choice, not an audit operation).
+- **WebSocket `/ws?session=X&client=Y`** — when a `client` is supplied, its UUID prefix must match `session.ipc_path`'s UUID, else close 4003 `WINDOW_MISMATCH` (isolates other windows' extensions). A clientless connection (browser `/viewer`) is allowed through so PTY broadcast stays visible on both ends. Global sessions remain accessible without `client`.
+- **IPC handshake (CLI ↔ extension)** in `SubagentClient`:
+  - `shouldUseIPC()` — env probe with 200ms socket-reachability check (orphan env falls back to HTTP mode)
+  - `ipcCall(method, params)` — length-prefixed JSON-RPC over Unix socket / Named Pipe
+  - `open()` — `prepareTerminal` → HTTP `/api/open` (with `ipc_path`) → `attachSession`
+- **Exported `parseIpcUuid()`** from `dist/app` so tests and downstream code can extract the canonical UUID from a socket path.
+
+### Refactored
+
+- **Daemon management moves into `SubagentClient`** as a factory + instance method shape. `SubagentClient` is the SDK that bridges CLI args and HTTP; `cli.ts` is now a thin parser/dispatcher.
+  - `SubagentClient.getInstance({ port? })` — async factory that ensures the daemon is running and returns a ready-to-use client. Forks if needed; returns immediately with `startResult()` recording `started` vs `already_running`.
+  - `SubagentClient.status()` — static, side-effect-free daemon query (read info + probePort). **Never forks.** Kept as a static method because `getInstance` cannot represent "diagnose without starting".
+  - `client.stop()` — instance method that gracefully shuts down the daemon via `POST /api/shutdown` (5s probe loop). Never forks.
+  - SDK consumer flow becomes: `const c = await SubagentClient.getInstance(); await c.open(...); await c.stop()` — two-step daemon lifecycle for embedded usage.
+  - **Removed `src/daemon_lifecycle.ts`** — its helpers were absorbed as module-private functions in `client.ts` (where the complexity lives: fork, probe, parse, auto-clear). The daemon side (`app.ts`) writes/clears its `daemon.pid` registry file with two direct `fs` calls — no shared module needed for two writes. The `<pid>,<port>` string format is the only contract between the two bundles.
+- **`readDaemonInfo()` now returns liveness, not raw state.** The file is read, parsed, and the recorded pid is checked with `isProcessAlive` in one step — stale entries (missing/malformed file, dead pid) are auto-unlinked and `undefined` is returned. Callers stop combining `readDaemonInfo + isProcessAlive` and stop manually clearing stale info:
+  - `SubagentClient.getInstance/status/stop` and `client.ts ensureManager()` all do a single `const live = readDaemonInfo()` check.
+  - Single source of truth for "is there a live daemon?" — the daemon info file (`~/.subagent-cli/daemon.pid`).
+
+### Tests
+- New `test/ipc.test.js` — 15 tests covering `parseIpcUuid`, ownership middleware, batch route filtering, WebSocket client check, and full IPC protocol (length-prefix framing, handshake)
+- 189 unit tests total (174 → 189), all passing
+
 ## [0.1.17] - 2026-05-13
 
 ### Added

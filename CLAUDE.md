@@ -137,10 +137,16 @@ Reuse 候选挑选（步骤 2/3 命中时）：活跃 IDLE（最早 lastActivity
 
 - **单实例约束**：全局只能有一个 daemon。`subagent-cli daemon start` 先读 `~/.subagent-cli/daemon.pid`，若 pid 存活则拒绝启动（`already_running`），即使 `--port` 不同也拒绝
 - **PID 文件**：`~/.subagent-cli/daemon.pid` 纯文本 `<pid>,<port>`。app 启动写入，shutdown / idle-timeout 退出时清除
-- **`subagent-cli daemon` 命令**（start/stop/status，可选 `--port`）— 由 cli.ts 直接调 daemon_lifecycle，不经 SubagentClient（避免与 auto-fork 冲突）
+- **`subagent-cli daemon` 命令**（start/stop/status，可选 `--port`）— 由 cli.ts 作为薄分发器调用 `SubagentClient` 的 daemon SDK（`getInstance` / `static status()` / `new SubagentClient().stop()`）。cli 只解析参数
+- **`SubagentClient` daemon SDK**（工厂 + 资源管理模式）：
+  - `await SubagentClient.getInstance(opts?)` — async 工厂，确保 daemon 在跑后返回 ready client。已活就 already_running，否则 fork。`c.startResult()` 拿到本次结果
+  - `c.stop()` — 实例方法，关 daemon（不是关 client），`POST /api/shutdown` + 5s 探端口。**不 fork**
+  - `SubagentClient.status()` — 静态查询，**绝不 fork**（保留为静态因为 getInstance 一定 fork，无法承载诊断语义）
+  - SDK 用户写法：`const c = await SubagentClient.getInstance(); await c.open(...); await c.stop()`
+- **读端（client.ts module-private helpers）**：`probePort` / `forkDaemonAndWait` / `readDaemonInfo` / `clearDaemonInfo` / `processAlive` 都是 `src/client.ts` 内部非 export 函数。`readDaemonInfo()` 内含进程存活检查 + 自动清 stale 文件，返回值即"是否有活的 daemon"，调用方一行判断
+- **写端（app.ts 直接 fs 操作）**：daemon 进程启动时 `writeFileSync(daemon.pid, \`${pid},${port}\`)` 注册自己，shutdown / idle-timeout 时 `unlinkSync` 清自己。两个 bundle（cli.js / app.js）独立编译，没有共享 daemon-lifecycle 模块，`<pid>,<port>` 字符串格式是它们之间唯一的契约
 - **动态端口**：`SubagentClient` 先读 daemon.pid。若已有存活 daemon 在非默认端口（如 `daemon start --port 7200`）→ client 自动连那个端口。无 pid 文件或进程已死 → 按 `config.port` fork 新 daemon
-- **`SUBAGENT_PORT` 环境变量**：`forkDaemonAndWait(port)` 通过该变量告知 app 绑定哪个端口（不依赖 config.json）
-- **共享模块 `src/daemon_lifecycle.ts`**：`probePort` / `forkDaemonAndWait` / `isProcessAlive` / `readDaemonInfo` / `writeDaemonInfo` / `clearDaemonInfo`。被 client.ts / cli.ts / app.ts 共用
+- **`SUBAGENT_PORT` 环境变量**：fork daemon 时通过该变量告知 app 绑定哪个端口（不依赖 config.json）
 
 ## 核心模式
 

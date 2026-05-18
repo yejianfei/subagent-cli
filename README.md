@@ -1,6 +1,26 @@
 # subagent-cli
 
-Let your AI agent drive other AI agents. Control Claude Code, Codex, Gemini CLI and other coding terminals through a unified CLI — assign tasks, review approvals, collect results.
+[![npm](https://img.shields.io/npm/v/@yejianfei.billy/subagent-cli?label=npm)](https://www.npmjs.com/package/@yejianfei.billy/subagent-cli)
+[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/yejianfei-billy.subagent-cli-vscode?label=VS%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=yejianfei-billy.subagent-cli-vscode)
+[![Open VSX](https://img.shields.io/open-vsx/v/yejianfei-billy/subagent-cli-vscode?label=Open%20VSX)](https://open-vsx.org/extension/yejianfei-billy/subagent-cli-vscode)
+
+**AI agents orchestrating AI agents** — a unified CLI for Claude Code, Codex, Gemini CLI, and other coding terminals.
+
+Assign tasks. Review approvals. Collect results.
+
+## Why?
+
+subagent-cli automates Spec-Driven Development across multiple agents — without changing how you already work.
+
+```
+Main Agent writes spec  →  Codex spec review  ⇄  revise
+                                  ↓ approved
+Main Agent writes plan  →  Codex plan review  ⇄  revise
+                                  ↓ approved
+Gemini CLI codes        →  Claude Code review ⇄  fix
+                                  ↓ approved
+                              Ship ✓
+```
 
 ## Quick Start
 
@@ -96,6 +116,26 @@ Run `subagent-cli --help` for all commands.
 - If a command times out, use `check` + `output` to inspect state before deciding next action.
 ```
 
+### Spec / Plan Review
+
+```markdown
+---
+name: subagent-spec-review
+description: Delegate spec or plan document review to a sub-agent, auto-revise and re-review until approved
+---
+
+Send a spec or plan document to a sub-agent for independent review.
+The main agent revises based on findings and re-submits — loop until the reviewer approves.
+
+## Flow
+
+1. `subagent-cli open -s codex --cwd .` — open reviewer in a different model than the author.
+2. `subagent-cli prompt --session <id> "Review the spec at <path>. Categorize findings as auto-fixable vs needs-user-decision."`
+3. Reviewer returns findings; main agent revises auto-fixable issues directly in the doc.
+4. Send `Re-review the spec at <path>` in the same session — reviewer re-reads from disk.
+5. Repeat until reviewer reports no issues. Escalate needs-user-decision items to the user.
+```
+
 ### Coding Delegation
 
 ```markdown
@@ -126,12 +166,12 @@ Send self-contained tasks — the sub-agent has no shared context with the main 
     Verification: <commands to run>
 ```
 
-### Independent Review Loop
+### Code Review
 
 ```markdown
 ---
-name: subagent-review-loop
-description: Delegate review to a different model, auto-fix findings, re-review until clean
+name: subagent-code-review
+description: Delegate code review to a sub-agent in a different model, auto-fix findings, re-review until clean
 ---
 
 Delegate review to a sub-agent running a different model (e.g. Codex reviews Claude output).
@@ -176,7 +216,7 @@ Auto-fix mechanical issues and re-review in a loop until all issues are resolved
 | `close`     | `--session <id>`                                                         | Close session (omit `--session` to close all). History preserved |
 | `delete`    | `--session <id>` `--closed` `--all`                                      | Delete session, all closed, or everything                        |
 | `exit`      | `--session <id>`                                                         | Graceful exit the sub-agent process                              |
-| `daemon`    | `start\|stop\|status` `--port <port>`                                    | Manage the App daemon. Single-instance globally: `start` refuses if a live daemon exists on any port. `stop` uses HTTP shutdown |
+| `daemon`    | `start\|stop\|status` `--port <port>`                    | Manage the App daemon. Single-instance globally: `start` refuses if a live daemon exists on any port. `stop` uses HTTP shutdown |
 
 Global option: `-c, --config <path>` — Custom config file path.
 
