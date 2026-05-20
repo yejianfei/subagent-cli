@@ -33,13 +33,15 @@ export class CodexAdapter extends SubagentCliAdapter {
    * Codex startup stages:
    *   1. Update prompt (optional) → send ↓+Enter to Skip
    *   2. Trust directory (optional) → send Enter to confirm
-   *   3. MCP boot (shows "Booting") → wait
-   *   4. Real IDLE (shows "% left", no "Booting") → done
+   *   3. Hooks need review (optional, codex >= 26.5) → ↓↓+Enter to Continue without trusting
+   *   4. MCP boot (shows "Booting") → wait
+   *   5. Real IDLE (shows "% left", no "Booting") → done
    */
   protected async onInit(_timeoutMs: number): Promise<void> {
     const maxIterations = 60
     for (let i = 0; i < maxIterations; i++) {
       await this.wait(2000)
+      this.throwIfExited('INIT')
       await this.terminal.flush()
       const screen = this.terminal.capture(this.terminal.totalLines)
 
@@ -60,6 +62,15 @@ export class CodexAdapter extends SubagentCliAdapter {
 
       if (screen.includes('Do you trust')) {
         this.terminal.write('\r')  // Enter → Yes
+        continue
+      }
+
+      if (screen.includes('Hooks need review')) {
+        this.terminal.write('\x1b[B')  // Down → option 2
+        await this.wait(100)
+        this.terminal.write('\x1b[B')  // Down → option 3: Continue without trusting
+        await this.wait(200)
+        this.terminal.write('\r')
         continue
       }
 
@@ -87,6 +98,7 @@ export class CodexAdapter extends SubagentCliAdapter {
     const isIdle = () => this.state === 'IDLE'
     for (let i = 0; i < 60 && !isIdle(); i++) {
       await this.wait(2000)
+      this.throwIfExited('INIT_PROMPT')
     }
 
     return { session: session ?? '' }

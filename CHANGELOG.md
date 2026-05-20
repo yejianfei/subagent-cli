@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.19] - 2026-05-21
+
+### Fixed — sub-agent startup error visibility
+
+- **Surface CLI startup errors instead of silently waiting 120s for timeout.** When the underlying CLI (codex / gemini) rejects its arguments (e.g. stale `resume <UUID>` no longer recognised) it prints an error and exits immediately, but the adapter used to keep polling for "% left" / "Type your message" until `READY_TIMEOUT`. Now:
+  - **`terminalExited` flag** on `SubagentCliAdapter` is set synchronously inside `terminal.on('exit')`, before the async cleanup runs.
+  - **New `throwIfExited(stage)` helper** captures the last 20 lines of screen content and throws `SUBAGENT_EXITED_DURING_<stage>` so the actual CLI error reaches the HTTP caller.
+  - **`exec()` now races `event` against `unexpected-exit`** — if the PTY dies while waiting for `ready` / `done`, the promise rejects immediately with the screen tail.
+  - `CodexAdapter.onInit` / phase-2 init loop and `GeminiCliAdapter.onInit` / phase-2 init loop both call `throwIfExited` each tick.
+
+### Added — Codex 26.5+ "Hooks need review" auto-skip
+
+- Codex's new startup dialog (`Hooks need review` → `1. Review hooks / 2. Trust all and continue / 3. Continue without trusting (hooks won't run)`) blocks subagent startup. `CodexAdapter.onInit` now detects this screen and picks option 3 (↓↓+Enter) — sub-agent proceeds without trusting unknown hooks. Existing `Do you trust the contents` directory-trust auto-confirm is unchanged.
+
 ## [0.1.18] - 2026-05-15
 
 ### Added — viewer & API alignment for VS Code extension

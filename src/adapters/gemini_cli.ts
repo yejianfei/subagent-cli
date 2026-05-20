@@ -41,6 +41,7 @@ export class GeminiCliAdapter extends SubagentCliAdapter {
     const maxIterations = 60
     for (let i = 0; i < maxIterations; i++) {
       await this.wait(2000)
+      this.throwIfExited('INIT')
       await this.terminal.flush()
       const screen = this.terminal.capture(this.terminal.totalLines)
 
@@ -78,6 +79,7 @@ export class GeminiCliAdapter extends SubagentCliAdapter {
     const isIdle = () => this.state === 'IDLE'
     for (let i = 0; i < 60 && !isIdle(); i++) {
       await this.wait(2000)
+      this.throwIfExited('INIT_PROMPT')
     }
     this.setAutoApprove(false)
 

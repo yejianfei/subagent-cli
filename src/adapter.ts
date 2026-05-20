@@ -62,6 +62,7 @@ export abstract class SubagentCliAdapter extends EventEmitter {
   private detectTimer: ReturnType<typeof setInterval> | null = null
   private autoApproveEnabled = false
   private expectingExit = false
+  protected terminalExited = false
 
   abstract readonly name: string
 
@@ -130,10 +131,20 @@ export abstract class SubagentCliAdapter extends EventEmitter {
       const timeout = timeoutMs > 0
         ? setTimeout(() => reject(new Error(`${event.toUpperCase()}_TIMEOUT`)), timeoutMs)
         : null
-      this.once(event, (result) => {
+      const onExit = () => {
         if (timeout) clearTimeout(timeout)
+        this.off(event, onResult)
+        const tail = this.terminal.capture(this.terminal.totalLines)
+          .trim().split('\n').slice(-20).join('\n').trim()
+        reject(new Error(`SUBAGENT_EXITED_DURING_${event.toUpperCase()}: ${tail || '(no output)'}`))
+      }
+      const onResult = (result: T) => {
+        if (timeout) clearTimeout(timeout)
+        this.off('unexpected-exit', onExit)
         resolve(result)
-      })
+      }
+      this.once(event, onResult)
+      this.once('unexpected-exit', onExit)
     })
     return Promise.resolve(before?.()).then(() => pending)
   }
@@ -141,6 +152,14 @@ export abstract class SubagentCliAdapter extends EventEmitter {
   /** Delay helper, for pacing terminal writes. Subclasses can also use. */
   protected wait(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms))
+  }
+
+  /** Throw if PTY exited early (e.g. CLI rejected args). Surfaces the last 20 screen lines. */
+  protected throwIfExited(stage: string): void {
+    if (!this.terminalExited) return
+    const tail = this.terminal.capture(this.terminal.totalLines)
+      .trim().split('\n').slice(-20).join('\n').trim()
+    throw new Error(`SUBAGENT_EXITED_DURING_${stage}: ${tail || '(no output)'}`)
   }
 
   /**
@@ -225,6 +244,7 @@ export abstract class SubagentCliAdapter extends EventEmitter {
     this.terminal = new PtyXterm(cfg.terminal.cols, cfg.terminal.rows, cfg.terminal.scrollback)
     this.terminal.on('data', (chunk: string) => this.onChunk(chunk))
     this.terminal.on('exit', () => {
+      this.terminalExited = true
       if (this.expectingExit) return  // Normal exit/close path handles this
       // Unexpected exit: try parse UUID for cleanup, mark closed, notify app
       this.terminal.flush().then(() => {
