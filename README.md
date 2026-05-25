@@ -1,5 +1,9 @@
 # subagent-cli
 
+[![macOS](https://img.shields.io/badge/macOS-supported-success?logo=apple&logoColor=white)](#)
+[![Linux](https://img.shields.io/badge/Linux-supported-success?logo=linux&logoColor=white)](#)
+[![Windows](https://img.shields.io/badge/Windows-not%20supported-inactive?logo=windows&logoColor=white)](#)
+
 [![npm](https://img.shields.io/npm/v/@yejianfei.billy/subagent-cli?label=npm)](https://www.npmjs.com/package/@yejianfei.billy/subagent-cli)
 [![VS Code Marketplace](https://badgen.net/vs-marketplace/v/yejianfei-billy.subagent-cli-vscode?label=VS%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=yejianfei-billy.subagent-cli-vscode)
 [![Open VSX](https://img.shields.io/open-vsx/v/yejianfei-billy/subagent-cli-vscode?label=Open%20VSX)](https://open-vsx.org/extension/yejianfei-billy/subagent-cli-vscode)

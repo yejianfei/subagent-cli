@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.1.20] - 2026-05-25
+
+### Added — IPC socket glob fallback by VSCODE_PID
+
+- **CLI now discovers the VS Code extension's IPC socket via glob when `SUBAGENT_VSCODE_IPC` is missing.** This happens when the CLI is spawned by another extension (e.g. Claude Code) whose host snapshotted env before our extension injected the var, leaving the session in standalone mode (no auto-opened editor terminal). New three-step degradation chain in `shouldUseIPC()`:
+  1. `SUBAGENT_VSCODE_IPC` env, if set and reachable → use it (fastest, unchanged).
+  2. else glob `<os.tmpdir()>/subagent-cli_*_<VSCODE_PID>.sock`, probe each, take first reachable.
+  3. neither → standalone (HTTP) mode, no regression.
+- `VSCODE_PID` (editor main-process pid) is the window identity: unique per window, inherited by all spawned children, stable across window reload. The workspace-hash segment is wildcarded, so the CLI needs no workspace knowledge — only the `_<VSCODE_PID>` suffix is matched exactly (a leading underscore guards against pid-substring collisions).
+- A discovered path is written back to `ipcPath` so the IPC handshake and the `X-Subagent-Cli-IPC` request header target the same window.
+- **Windows:** Named Pipes are not on the filesystem, so glob is skipped (env path only).
+- New `probeSocket()` helper (Unix socket / Named Pipe reachability, 200ms) and exported `discoverIpcByVscodePid()` for testing.
+
+### Fixed — `--cwd` always stored as absolute path
+
+- **`subagent-cli open --cwd <dir>`** now resolves the argument with `path.resolve()` before sending to the daemon, so the session's `cwd` field is always an absolute path regardless of whether the user passed `.`, `./foo`, or an absolute path. Previously the literal string (e.g. `"."`) was persisted, making it impossible for viewer / VS Code extension / cross-terminal listings to identify the real working directory.
+- **`subagent-cli sessions --cwd <dir>`** filter side is resolved symmetrically — `--cwd .` still matches new sessions whose stored cwd is the absolute form.
+- Old sessions created before this release keep their existing literal cwd in `~/.subagent-cli/sessions/<id>/config.json`; they continue to work but display the original string. Close and reopen to refresh.
+
 ## [0.1.19] - 2026-05-21
 
 ### Fixed — sub-agent startup error visibility

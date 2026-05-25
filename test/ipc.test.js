@@ -8,7 +8,7 @@ const { createServer } = require('http')
 const WebSocket = require('ws')
 const request = require('supertest')
 const { app, SubagentClient } = require('../dist/app')
-const { parseIpcUuid } = require('../dist/app')
+const { parseIpcUuid, discoverIpcByVscodePid } = require('../dist/app')
 
 const TEST_HOME = join(tmpdir(), `ipc-test-${Date.now()}-${Math.random().toString(36).slice(2)}`)
 const VALID_CWD = join(TEST_HOME, 'cwd')
@@ -273,18 +273,24 @@ describe('WebSocket window ownership', () => {
 describe('SubagentClient IPC', () => {
   let socketPath
   let ipcServer
+  let savedVscodePid
   const receivedCalls = []
 
   beforeEach(() => {
     socketPath = join(tmpdir(), `subagent-cli-ipc-test_${Date.now()}_${Math.random().toString(36).slice(2)}.sock`)
     fs.existsSync(socketPath) && fs.unlinkSync(socketPath)
     receivedCalls.length = 0
+    // Tests run inside VS Code where VSCODE_PID is set + a real extension socket
+    // may exist; neutralize it so glob fallback stays off unless a test opts in.
+    savedVscodePid = process.env.VSCODE_PID
+    delete process.env.VSCODE_PID
   })
 
   afterEach(() => {
     ipcServer?.close()
     fs.existsSync(socketPath) && fs.unlinkSync(socketPath)
     delete process.env.SUBAGENT_VSCODE_IPC
+    savedVscodePid === undefined ? delete process.env.VSCODE_PID : (process.env.VSCODE_PID = savedVscodePid)
   })
 
   function startMockIpcServer(handler) {
@@ -336,6 +342,27 @@ describe('SubagentClient IPC', () => {
     assert.equal(result, true)
   })
 
+  it('shouldUseIPC falls back to VSCODE_PID glob when env missing, and writes path back', async () => {
+    const pid = String(900000 + Math.floor(Math.random() * 90000))
+    socketPath = join(tmpdir(), `subagent-cli_globfb1_${pid}.sock`)
+    await startMockIpcServer(() => ({ success: true }))
+    delete process.env.SUBAGENT_VSCODE_IPC
+    process.env.VSCODE_PID = pid
+    const c = new SubagentClient()
+    assert.equal(await c['shouldUseIPC'](), true)
+    // discovered path is written back so handshake + header target the right window
+    assert.equal(c['ipcPath'], socketPath)
+  })
+
+  it('shouldUseIPC prefers reachable env path over glob (no discovery needed)', async () => {
+    await startMockIpcServer(() => ({ success: true }))
+    process.env.SUBAGENT_VSCODE_IPC = socketPath
+    process.env.VSCODE_PID = '987654'  // would glob-miss, but env wins first
+    const c = new SubagentClient()
+    assert.equal(await c['shouldUseIPC'](), true)
+    assert.equal(c['ipcPath'], socketPath)
+  })
+
   it('ipcCall sends length-prefixed JSON and parses response', async () => {
     await startMockIpcServer((msg) => {
       if (msg.method === 'prepareTerminal') return { success: true, client_id: `${WIN_A_UUID}_007` }
@@ -364,5 +391,90 @@ describe('SubagentClient IPC', () => {
     const prep = receivedCalls.find((m) => m.method === 'prepareTerminal')
     assert.ok(prep, 'prepareTerminal should have been called')
     assert.equal(prep.params.subagent, 'test-agent')
+  })
+})
+
+// ── discoverIpcByVscodePid (glob fallback) ──
+
+describe('discoverIpcByVscodePid', () => {
+  const servers = []
+  const files = []
+  let savedVscodePid
+  let pidSeq = 0
+
+  // Unique pid per call avoids cross-test collisions in the shared tmpdir.
+  function uniquePid() {
+    pidSeq += 1
+    return String(700000 + pidSeq)
+  }
+
+  // Start a listening unix socket; returns its full path.
+  function liveSocket(name) {
+    const p = join(tmpdir(), name)
+    fs.existsSync(p) && fs.unlinkSync(p)
+    files.push(p)
+    return new Promise((resolve) => {
+      const srv = net.createServer((s) => s.end())
+      servers.push(srv)
+      srv.listen(p, () => resolve(p))
+    })
+  }
+
+  // Create a stale socket-looking file with no listener.
+  function deadSocketFile(name) {
+    const p = join(tmpdir(), name)
+    fs.existsSync(p) && fs.unlinkSync(p)
+    fs.writeFileSync(p, '')
+    files.push(p)
+    return p
+  }
+
+  beforeEach(() => { savedVscodePid = process.env.VSCODE_PID })
+  afterEach(() => {
+    savedVscodePid === undefined ? delete process.env.VSCODE_PID : (process.env.VSCODE_PID = savedVscodePid)
+  })
+  after(() => {
+    servers.forEach((s) => s.close())
+    files.forEach((p) => fs.existsSync(p) && fs.unlinkSync(p))
+  })
+
+  it('returns undefined when VSCODE_PID is not set', async () => {
+    delete process.env.VSCODE_PID
+    assert.equal(await discoverIpcByVscodePid(), undefined)
+  })
+
+  it('finds the live socket whose name carries the matching VSCODE_PID', async () => {
+    const pid = uniquePid()
+    const p = await liveSocket(`subagent-cli_abc12345_${pid}.sock`)
+    process.env.VSCODE_PID = pid
+    assert.equal(await discoverIpcByVscodePid(), p)
+  })
+
+  it('wildcards the workspace-hash segment (any hash, exact pid)', async () => {
+    const pid = uniquePid()
+    const p = await liveSocket(`subagent-cli_ffffffff_${pid}.sock`)
+    process.env.VSCODE_PID = pid
+    assert.equal(await discoverIpcByVscodePid(), p)
+  })
+
+  it('ignores a socket whose pid segment differs', async () => {
+    const otherPid = uniquePid()
+    await liveSocket(`subagent-cli_deadbeef_${otherPid}.sock`)
+    process.env.VSCODE_PID = uniquePid() + '0'  // no socket for this pid
+    assert.equal(await discoverIpcByVscodePid(), undefined)
+  })
+
+  it('skips a dead socket file (no listener) and returns undefined', async () => {
+    const pid = uniquePid()
+    deadSocketFile(`subagent-cli_cafe0000_${pid}.sock`)
+    process.env.VSCODE_PID = pid
+    assert.equal(await discoverIpcByVscodePid(), undefined)
+  })
+
+  it('does not collide on pid substring (leading underscore guards)', async () => {
+    // socket for pid 457, query pid 57 → must NOT match `..._457.sock`
+    await liveSocket(`subagent-cli_hash0001_457.sock`)
+    process.env.VSCODE_PID = '57'
+    assert.equal(await discoverIpcByVscodePid(), undefined)
   })
 })

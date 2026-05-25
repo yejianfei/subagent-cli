@@ -1,7 +1,8 @@
 import { connect, type Socket } from 'net'
 import { fork } from 'child_process'
 import { dirname, join } from 'path'
-import { existsSync, readFileSync, realpathSync, unlinkSync } from 'fs'
+import { existsSync, readdirSync, readFileSync, realpathSync, unlinkSync } from 'fs'
+import { tmpdir } from 'os'
 import { getHome, loadConfig } from './config'
 
 export interface DaemonOpResult {
@@ -32,6 +33,39 @@ function probePort(port: number): Promise<boolean> {
     sock.on('error', () => resolve(false))
     sock.on('timeout', () => { sock.destroy(); resolve(false) })
   })
+}
+
+/** Unix socket / Named Pipe probe: true if a peer is listening (200ms timeout). */
+function probeSocket(path: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const sock = connect(path)
+    const timer = setTimeout(() => { sock.destroy(); resolve(false) }, 200)
+    sock.once('connect', () => { clearTimeout(timer); sock.end(); resolve(true) })
+    sock.once('error', () => { clearTimeout(timer); resolve(false) })
+  })
+}
+
+/**
+ * Discover this window's IPC socket by VSCODE_PID when SUBAGENT_VSCODE_IPC is
+ * missing — happens when the CLI is spawned by another extension whose host
+ * snapshotted env before our extension injected the var (e.g. Claude Code).
+ *
+ * The extension names its socket `subagent-cli_<sha1(workspace)[:8]>_<VSCODE_PID>.sock`.
+ * We wildcard the workspace-hash segment and lock onto `_<VSCODE_PID>` (the editor
+ * main-process pid, inherited by all spawned children and stable across reloads),
+ * then probe each match and return the first reachable one.
+ *
+ * Windows Named Pipes are not on the filesystem — readdir can't enumerate them,
+ * so glob is skipped there (env path only).
+ */
+export async function discoverIpcByVscodePid(): Promise<string | undefined> {
+  const pid = process.env.VSCODE_PID
+  if (!pid || process.platform === 'win32') return undefined
+  const dir = tmpdir()
+  const re = new RegExp(`^subagent-cli_.+_${pid}\\.sock$`)
+  const matches = readdirSync(dir).filter(f => re.test(f)).map(f => join(dir, f))
+  const probed = await Promise.all(matches.map(async p => ({ p, alive: await probeSocket(p) })))
+  return probed.find(x => x.alive)?.p
 }
 
 /**
@@ -101,27 +135,38 @@ interface IpcResponse {
 
 export class SubagentClient {
   private port!: number
-  private readonly ipcPath: string | undefined = process.env.SUBAGENT_VSCODE_IPC || undefined
+  private ipcPath: string | undefined = process.env.SUBAGENT_VSCODE_IPC || undefined
   private ipcChecked = false
   private ipcUsable = false
 
   /**
-   * Detect if the IPC peer (VS Code extension) is reachable.
-   * Returns false fast when env is missing or the socket has no listener
-   * (e.g. orphan env from a closed window). 200ms timeout.
+   * Detect if the IPC peer (VS Code extension) is reachable, resolving the
+   * socket path via a two-step degradation chain:
+   *
+   *   1. SUBAGENT_VSCODE_IPC env, if set and reachable → use it (fastest path).
+   *   2. else glob `<tmpdir>/subagent-cli_*_<VSCODE_PID>.sock` and probe matches —
+   *      covers CLI spawned without env injection (see discoverIpcByVscodePid).
+   *   3. neither reachable → independent (HTTP) mode, no regression.
+   *
+   * A discovered path is written back to this.ipcPath so the handshake
+   * (ipcCall) and the X-Subagent-Cli-IPC request header target the same window.
+   * 200ms probe per candidate.
    */
   private async shouldUseIPC(): Promise<boolean> {
     if (this.ipcChecked) return this.ipcUsable
     this.ipcChecked = true
-    if (!this.ipcPath) return false
-    const target = this.ipcPath
-    this.ipcUsable = await new Promise<boolean>(resolve => {
-      const sock = connect(target)
-      const timer = setTimeout(() => { sock.destroy(); resolve(false) }, 200)
-      sock.once('connect', () => { clearTimeout(timer); sock.end(); resolve(true) })
-      sock.once('error', () => { clearTimeout(timer); resolve(false) })
-    })
-    return this.ipcUsable
+    if (this.ipcPath && await probeSocket(this.ipcPath)) {
+      this.ipcUsable = true
+      return true
+    }
+    const discovered = await discoverIpcByVscodePid()
+    if (discovered) {
+      this.ipcPath = discovered
+      this.ipcUsable = true
+      return true
+    }
+    this.ipcUsable = false
+    return false
   }
 
   /**

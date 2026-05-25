@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { program } from 'commander'
+import path from 'node:path'
 import { setConfigPath } from './config'
 import { SubagentClient } from './client'
 
@@ -95,7 +96,7 @@ program
   .option('--status <state>', 'Filter by state (e.g. IDLE, RUNNING, ASKING, CLOSED)')
   .action(async (opts) => {
     const c = await SubagentClient.getInstance()
-    await output(await c.getSessions(opts.cwd, opts.status))
+    await output(await c.getSessions(opts.cwd ? path.resolve(opts.cwd) : undefined, opts.status))
   })
 
 program
@@ -111,7 +112,7 @@ program
     const c = await SubagentClient.getInstance()
     await output(await c.open({
       subagent: opts.subagent,
-      cwd: opts.cwd ?? process.cwd(),
+      cwd: path.resolve(opts.cwd ?? process.cwd()),
       session: opts.session,
       role: opts.role,
       prompt: text,

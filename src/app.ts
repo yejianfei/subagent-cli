@@ -26,7 +26,7 @@ export { PtyXterm } from './pty_xterm'
 export { ClaudeCodeAdapter } from './adapters/claude_code'
 export { CodexAdapter } from './adapters/codex'
 export { GeminiCliAdapter } from './adapters/gemini_cli'
-export { SubagentClient } from './client'
+export { SubagentClient, discoverIpcByVscodePid } from './client'
 export { parseIpcUuid } from './adapter'
 // Augment Koa request with parsed body
 declare module 'koa' {
