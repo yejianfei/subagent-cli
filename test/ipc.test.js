@@ -226,6 +226,24 @@ describe('WebSocket window ownership', () => {
     assert.equal(r.code, 4003)
   })
 
+  it('accepts multi-segment uuid <hash>_<pid> (new socket naming)', async () => {
+    // parseIpcUuid returns "abcd1234_45764"; client_id appends a counter.
+    // split('_')[0] would wrongly yield "abcd1234" → false 4003. replace(/_\d+$/) keeps the pid.
+    const ipc = join(tmpdir(), 'subagent-cli_abcd1234_45764.sock')
+    const s = await openSessionViaHttp(ipc)
+    const r = await connectWs(s, 'abcd1234_45764_001')
+    assert.equal(r.status, 'open')
+    r.ws.close()
+  })
+
+  it('rejects multi-segment uuid from a different window (different pid)', async () => {
+    const ipc = join(tmpdir(), 'subagent-cli_abcd1234_45764.sock')
+    const s = await openSessionViaHttp(ipc)
+    const r = await connectWs(s, 'abcd1234_99999_001')
+    assert.equal(r.status, 'closed')
+    assert.equal(r.code, 4003)
+  })
+
   it('allows clientless connection to a window-bound session (browser viewer broadcast)', async () => {
     const s = await openSessionViaHttp(WIN_A_IPC)
     const r = await connectWs(s)

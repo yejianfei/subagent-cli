@@ -736,7 +736,9 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
     if (sessionIpc) {
       const expectedUuid = parseIpcUuid(sessionIpc)
       const clientId = url.searchParams.get('client') ?? ''
-      const clientUuid = clientId.split('_')[0]
+      // Strip only the trailing `_<counter>`; the uuid itself may contain `_`
+      // (new naming `<hash>_<pid>`), so split('_')[0] would wrongly drop the pid.
+      const clientUuid = clientId.replace(/_\d+$/, '')
       if (clientId && clientUuid !== expectedUuid) { ws.close(4003, 'WINDOW_MISMATCH'); return }
     }
     ;(ws as any)._sessionId = sessionId

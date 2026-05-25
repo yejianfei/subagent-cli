@@ -2,6 +2,10 @@
 
 ## [0.1.20] - 2026-05-25
 
+### Fixed — WebSocket window-auth wrongly rejected multi-segment uuids
+
+- **`/ws?client=` ownership check dropped the pid segment of the new socket naming, closing the connection with 4003 `WINDOW_MISMATCH`.** `parseIpcUuid('subagent-cli_<hash>_<pid>.sock')` returns `<hash>_<pid>` (the regex treats `_` as a valid uuid char), but the WS check derived the client uuid via `clientId.split('_')[0]` → only `<hash>`. `<hash>` ≠ `<hash>_<pid>` rejected every legitimate connection from a window using the `_<VSCODE_PID>` naming, and an extension that disposes its terminal on ws-close saw the panel created then instantly destroyed. Now strips only the trailing `_<counter>` via `clientId.replace(/_\d+$/, '')`, preserving the full uuid — compatible with both old (`<hash>_001`) and new (`<hash>_<pid>_001`) client ids.
+
 ### Added — IPC socket glob fallback by VSCODE_PID
 
 - **CLI now discovers the VS Code extension's IPC socket via glob when `SUBAGENT_VSCODE_IPC` is missing.** This happens when the CLI is spawned by another extension (e.g. Claude Code) whose host snapshotted env before our extension injected the var, leaving the session in standalone mode (no auto-opened editor terminal). New three-step degradation chain in `shouldUseIPC()`:
