@@ -16,7 +16,7 @@ const SESSION_ID_RE = /--resume\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
  * Session ID is captured at exit() / close() time via parseSessionId().
  *
  * Detection:
- *   IDLE:    match_words hit + idle_words hit (❯ + shortcuts/accept edits)
+ *   IDLE:    match_words hit + idle_words hit (❯ + shortcuts / shift+tab to cycle)
  *   ASKING:  match_words hit + asking_words hit (Esc/trust + Esc to cancel/Yes, I trust)
  *   RUNNING: none of the above match
  */
@@ -105,11 +105,13 @@ export class ClaudeCodeAdapter extends SubagentCliAdapter {
         exit: 'exit',                // /exit command
       },
       match_words: ['❯', 'trust', 'Esc', '? for shortcuts'],
-      idle_words: ['shortcuts', 'accept edits'],
+      // v2.1.145+ has 4 input modes via shift+tab: normal (? for shortcuts),
+      // auto mode / accept edits / plan mode (all show "(shift+tab to cycle)").
+      idle_words: ['shortcuts', 'shift+tab to cycle'],
       running_words: ['esc to interrupt'],
       asking_words: ['Esc to cancel', 'I trust'],
       prompt_marker: '❯',
-      chrome_words: ['shortcuts', 'accept edits', 'Update available', 'brew upgrade',
+      chrome_words: ['shortcuts', 'shift+tab to cycle', 'Update available', 'brew upgrade',
                      'Esc to cancel', 'Tab to amend'],
     }
   }

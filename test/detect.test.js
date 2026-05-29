@@ -83,7 +83,8 @@ describe('ClaudeCodeAdapter.getAdapterDetectRules()', () => {
     const a = new TestableClaudeCode()
     const rules = a.testGetDetectRules()
     assert.ok(rules.idle_words.includes('shortcuts'))
-    assert.ok(rules.idle_words.includes('accept edits'))
+    // v2.1.145+ input modes (auto/accept edits/plan) all show "(shift+tab to cycle)"
+    assert.ok(rules.idle_words.includes('shift+tab to cycle'))
   })
 
   it('asking_words contain approval dialog indicators', () => {
@@ -293,6 +294,21 @@ describe('ClaudeCodeAdapter detect() state detection', () => {
     // Has ❯ + "shortcuts" but no "Esc to cancel" → detect returns IDLE.
     // This is correct for detect(). The defense is onIdle() ignoring ASKING state.
     assert.equal(a.detectState(screen), 'IDLE')
+  })
+
+  it('detects IDLE in v2.1.145 auto/accept-edits/plan modes (shift+tab to cycle)', () => {
+    const a = new TestableClaudeCode()
+    const footer = (mode) => [
+      '───────────────────────────────────────────────────────────────────────────────────────',
+      '❯',
+      '───────────────────────────────────────────────────────────────────────────────────────',
+      `  ${mode}                                                                 ◈ max · /effort`,
+    ].join('\n')
+    // Regression: auto mode and plan mode used to stall init because idle_words
+    // only matched "shortcuts"/"accept edits" (pre-v2.1.145 wording).
+    assert.equal(a.detectState(footer('⏵⏵ auto mode on (shift+tab to cycle)')), 'IDLE')
+    assert.equal(a.detectState(footer('⏵⏵ accept edits on (shift+tab to cycle)')), 'IDLE')
+    assert.equal(a.detectState(footer('⏸ plan mode on (shift+tab to cycle)')), 'IDLE')
   })
 
 })

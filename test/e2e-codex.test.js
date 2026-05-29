@@ -24,6 +24,10 @@ const { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync } = require('
 const { tmpdir, homedir } = require('os')
 const net = require('net')
 
+// E2E runs headless — never route through the VS Code IPC bridge.
+delete process.env.SUBAGENT_VSCODE_IPC
+delete process.env.SUBAGENT_VSCODE_UUID
+
 const CLI = join(__dirname, '..', 'dist', 'cli.js')
 
 // ══════════════════════════════════════════════════════════════════

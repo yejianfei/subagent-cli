@@ -43,7 +43,9 @@ export class CodexAdapter extends SubagentCliAdapter {
       await this.wait(2000)
       this.throwIfExited('INIT')
       await this.terminal.flush()
-      const screen = this.terminal.capture(this.terminal.totalLines)
+      // Visible screen only — capturing full scrollback let a dismissed "Update available"
+      // dialog linger and re-match below, then ↓+Enter mis-navigated the trust dialog (selecting "No, quit").
+      const screen = this.terminal.capture()
 
       if ((screen.includes('% left') || screen.includes('· /'))
           && !screen.includes('Booting')) {

@@ -287,7 +287,11 @@ export class SubagentClient {
     if (body) headers['Content-Type'] = 'application/json'
     // VS Code mode: stamp every request with the window IPC path so daemon can
     // filter listing and reject cross-window single-session operations (403 WINDOW_MISMATCH).
-    if (this.ipcPath) headers['X-Subagent-Cli-IPC'] = this.ipcPath
+    // Gate on shouldUseIPC() (socket actually reachable), NOT the raw env value — this
+    // matches open()'s window-binding condition. A stale SUBAGENT_VSCODE_IPC env (extension
+    // gone, socket dead) must NOT stamp the header, or the daemon would filter out sessions
+    // that were never window-bound (open went through plain HTTP) → status 404 → runaway opens.
+    if (await this.shouldUseIPC() && this.ipcPath) headers['X-Subagent-Cli-IPC'] = this.ipcPath
     const res = await fetch(`http://localhost:${this.port}/api${path}`, {
       method,
       headers,

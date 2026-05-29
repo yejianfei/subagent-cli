@@ -6,6 +6,12 @@ const { mkdtempSync, rmSync, existsSync, readFileSync, readdirSync } = require('
 const { tmpdir, homedir } = require('os')
 const net = require('net')
 
+// E2E runs headless — never route through the VS Code IPC bridge (the editor
+// extension injects SUBAGENT_VSCODE_IPC, which would make the CLI window-scope
+// sessions and fail every status/sessions assertion).
+delete process.env.SUBAGENT_VSCODE_IPC
+delete process.env.SUBAGENT_VSCODE_UUID
+
 const CLI = join(__dirname, '..', 'dist', 'cli.js')
 const PROJECT_ROOT = join(__dirname, '..')
 

@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.1.21] - 2026-05-29
+
+### Fixed
+
+- **Claude Code adapter stalled at init in auto/plan mode** — Claude Code v2.1.145 added two input modes (auto mode, plan mode) whose footer reads `(shift+tab to cycle)` instead of the old `? for shortcuts` / `accept edits`. The adapter's `idle_words` didn't recognize them, so detection never reached IDLE. Now `idle_words` includes `shift+tab to cycle`, covering normal / auto / accept-edits / plan modes. (Surfaced with the `deepseek` subagent under a global `defaultMode: auto`.)
+- **Codex adapter spawned runaway sessions on init** — Codex 0.135's update-available dialog text lingered in scrollback; `onInit` captured the full scrollback, so a dismissed "Update available" kept re-matching and sent ↓+Enter onto the following trust dialog, selecting "No, quit" → Codex exited → reopened in a loop. `onInit` now reads the visible screen only.
+- **IPC window header inconsistency stranded sessions** — `request()` stamped `X-Subagent-Cli-IPC` whenever `SUBAGENT_VSCODE_IPC` env was set, even if the socket was unreachable, while `open()` only binds a window via `shouldUseIPC()` (real socket reachability). With a stale env (extension closed / headless CLI), `open` went plain-HTTP (no window) but follow-up requests carried the header → daemon filtered the unbound session out → `status` 404 → callers reopened endlessly. Header injection is now gated on `shouldUseIPC()`, matching `open()`. Socket-reachable (live extension) behavior is unchanged.
+
+### Changed
+
+- Default Codex model `gpt-5.4` → `gpt-5.5` (config defaults + README).
+
+### Tests
+
+- `detect.test.js`: added auto/accept-edits/plan mode IDLE detection regression cases.
+- E2E suites isolate the VS Code IPC bridge (`SUBAGENT_VSCODE_IPC`/`UUID` unset) — headless tests must not route through the editor extension.
+- Verified: 175 unit, Claude e2e 69/69, Codex e2e 42/42; deepseek manual (init + IDLE).
+
 ## [0.1.20] - 2026-05-25
 
 ### Fixed — WebSocket window-auth wrongly rejected multi-segment uuids

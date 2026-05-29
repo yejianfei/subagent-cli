@@ -8,6 +8,10 @@ const net = require('net')
 
 const { basename } = require('path')
 
+// E2E runs headless — never route through the VS Code IPC bridge.
+delete process.env.SUBAGENT_VSCODE_IPC
+delete process.env.SUBAGENT_VSCODE_UUID
+
 const CLI = join(__dirname, '..', 'dist', 'cli.js')
 
 // ══════════════════════════════════════════════════════════════════

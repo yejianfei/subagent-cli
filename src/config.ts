@@ -63,10 +63,10 @@ const DEFAULTS: Omit<AppConfig, 'home'> = {
     },
     codex: {
       adapter: 'codex',
-      description: 'OpenAI Codex CLI (GPT-5.4)',
+      description: 'OpenAI Codex CLI (GPT-5.5)',
       role: 'You are a helpful assistant.',
       command: 'codex',
-      args: ['--ask-for-approval', 'untrusted', '-m', 'gpt-5.4'],
+      args: ['--ask-for-approval', 'untrusted', '-m', 'gpt-5.5'],
       env: {},
     },
     gemini: {
