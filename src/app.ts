@@ -128,6 +128,7 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
     inlinePrompt?: string,
     excludeSession?: string,
     callerIpcPath = '',
+    auto = false,
   ): Promise<Record<string, unknown> | null> {
     const ratio = config.idle.reuse_ratio ?? 0.5
     const minIdleMs = config.idle.timeout * 1000 * ratio
@@ -154,6 +155,7 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
     if (activeCandidates.length > 0) {
       const [id, adapter] = activeCandidates[0]
       trackActivity(id, adapter)
+      if (auto) adapter.setAutoApprove(true)
       if (inlinePrompt) {
         const r = await adapter.prompt(inlinePrompt, timeout)
         return { session: id, reused: true, ...r }
@@ -206,6 +208,7 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
       await adapter.close()
       throw err
     }
+    if (auto) adapter.setAutoApprove(true)
     if (inlinePrompt) {
       const r = await adapter.prompt(inlinePrompt, timeout)
       return { session: id, reused: true, ...r }
@@ -376,7 +379,8 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
         await adapter.close()
         throw err
       }
-      // Optional inline prompt
+      // Optional auto-approve + inline prompt
+      if (body.auto) adapter.setAutoApprove(true)
       const inlinePrompt = body.prompt as string | undefined
       if (inlinePrompt) {
         const r = await adapter.prompt(inlinePrompt, timeout)
@@ -399,7 +403,7 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
     const reuseEnabled = (body.reuse as boolean | undefined) ?? config.idle.fast_reuse ?? false
     const bodyIpcPath = body.ipc_path as string | undefined
     if (reuseEnabled) {
-      const reused = await tryReuseSession(cwd, subagentName, subCfg.adapter, timeout, body.prompt as string | undefined, excludeSession, bodyIpcPath ?? '')
+      const reused = await tryReuseSession(cwd, subagentName, subCfg.adapter, timeout, body.prompt as string | undefined, excludeSession, bodyIpcPath ?? '', body.auto === true)
       if (reused) { ok(ctx, reused); return }
     }
 
@@ -437,7 +441,8 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
     })
     persistSession(id, params, adapter.getSessionId())
     console.error(`[open] persisted, sending ok for ${id}`)
-    // Optional inline prompt
+    // Optional auto-approve + inline prompt
+    if (body.auto) adapter.setAutoApprove(true)
     const inlinePrompt = body.prompt as string | undefined
     if (inlinePrompt) {
       const r = await adapter.prompt(inlinePrompt, timeout)
@@ -449,8 +454,9 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
   // POST /api/session/:id/prompt
   router.post('/session/:id/prompt', async (ctx) => {
     const adapter = getAdapter(ctx); if (!adapter) return
-    const { prompt, timeout } = ctx.request.body as { prompt: string; timeout?: number }
+    const { prompt, timeout, auto } = ctx.request.body as { prompt: string; timeout?: number; auto?: boolean }
     try {
+      if (auto) adapter.setAutoApprove(true)
       const result = await adapter.prompt(prompt, timeout ?? 0)
       ok(ctx, { session: ctx.params.id, ...result })
     } catch (err) {
@@ -549,7 +555,7 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
     while (true) {
       const result = await poll()
       if (result.state === waitState) { ok(ctx, result); return }
-      if (result.state === 'ASKING') {
+      if (result.state === 'ASKING' && !adapter.autoApprove) {
         fail(ctx, 409, 'APPROVAL_NEEDED', 'Session requires approval'); return
       }
       if (deadline > 0 && Date.now() >= deadline) {

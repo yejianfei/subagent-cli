@@ -892,6 +892,77 @@ describe('App HTTP API', () => {
       const res = await agent.get(`/api/session/${sessionId}/check?wait=ASKING&timeout=5`).expect(200)
       assert.equal(res.body.data.state, 'ASKING')
     })
+
+    it('should NOT short-circuit ASKING when autoApprove is on (poll continues)', async () => {
+      // autoApprove on: ASKING is handled internally by adapter, wait must not bail with 409.
+      // State stays ASKING in mock → wait times out (408), proving the ASKING-409 branch was skipped.
+      const adp = ctx.sessions.get(sessionId)
+      adp._setState('ASKING')
+      adp.setAutoApprove(true)
+      const res = await agent.get(`/api/session/${sessionId}/check?wait=IDLE&timeout=2`).expect(408)
+      assert.equal(res.body.data.error, 'TIMEOUT')
+      adp.setAutoApprove(false)
+    })
+  })
+
+  // ── --auto: open / prompt body flag turns on autoApprove ──
+
+  describe('--auto flag enables autoApprove on the session', () => {
+    it('should turn on autoApprove when open body has auto: true', async () => {
+      const res = await agent
+        .post('/api/open')
+        .send({ subagent: 'test-agent', cwd: VALID_CWD, auto: true })
+        .set('Content-Type', 'application/json')
+        .expect(200)
+      const sid = res.body.data.session
+      const adp = ctx.sessions.get(sid)
+      assert.equal(adp.autoApprove, true)
+      await agent.post(`/api/session/${sid}/close`)
+    })
+
+    it('should leave autoApprove off when open body has no auto field', async () => {
+      const res = await agent
+        .post('/api/open')
+        .send({ subagent: 'test-agent', cwd: VALID_CWD })
+        .set('Content-Type', 'application/json')
+        .expect(200)
+      const sid = res.body.data.session
+      const adp = ctx.sessions.get(sid)
+      assert.equal(adp.autoApprove, false)
+      await agent.post(`/api/session/${sid}/close`)
+    })
+
+    it('should turn on autoApprove when prompt body has auto: true', async () => {
+      const r1 = await agent
+        .post('/api/open')
+        .send({ subagent: 'test-agent', cwd: VALID_CWD })
+        .set('Content-Type', 'application/json')
+        .expect(200)
+      const sid = r1.body.data.session
+      const adp = ctx.sessions.get(sid)
+      adp._setState('IDLE')
+      assert.equal(adp.autoApprove, false)
+      await agent
+        .post(`/api/session/${sid}/prompt`)
+        .send({ prompt: 'task', auto: true })
+        .set('Content-Type', 'application/json')
+        .expect(200)
+      assert.equal(adp.autoApprove, true)
+      await agent.post(`/api/session/${sid}/close`)
+    })
+
+    it('should turn on autoApprove when open with inline prompt + auto: true', async () => {
+      const res = await agent
+        .post('/api/open')
+        .send({ subagent: 'test-agent', cwd: VALID_CWD, prompt: 'hello', auto: true })
+        .set('Content-Type', 'application/json')
+        .expect(200)
+      const sid = res.body.data.session
+      const adp = ctx.sessions.get(sid)
+      assert.equal(adp.autoApprove, true)
+      assert.equal(res.body.data.status, 'done')
+      await agent.post(`/api/session/${sid}/close`)
+    })
   })
 
   // ── GET /api/sessions — status filter ──

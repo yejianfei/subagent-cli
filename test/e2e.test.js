@@ -546,6 +546,24 @@ describe('E2E: Single session real task', { timeout: 900_000 }, () => {
     await assertCheck(sessionId, 'IDLE')
   })
 
+  it('㉑¾ prompt --auto: one-shot flag merges auto + prompt → done', async () => {
+    await assertCheck(sessionId, 'IDLE')
+    // --auto on prompt should turn on autoApprove and run through to done in one call,
+    // without a separate `auto` command.
+    const { json } = await cli([
+      'prompt',
+      '--auto',
+      'Create a file called auto-flag-test.txt in the current directory with content "via --auto flag".',
+      '--session', sessionId,
+    ], 660_000)
+    assert.equal(json.success, true)
+    assert.equal(json.data.status, 'done', '--auto flag should auto-approve + complete')
+    // Confirm session is in autoApprove via /auto toggle returning current state when no arg flips it
+    const { json: off } = await cli(['auto', '--session', sessionId, '--off'])
+    assert.equal(off.data.auto, false, 'auto should have been on before --off')
+    await assertCheck(sessionId, 'IDLE')
+  })
+
   // ── Large content ──
 
   it('㉒ prompt: detailed explanation (large output)', async () => {
@@ -886,6 +904,29 @@ describe('E2E: New features (v0.1.11)', { timeout: 600_000 }, () => {
     await cli(['close', '--session', json.data.session])
     await cli(['delete', '--session', json.data.session])
     rmSync(inlineDir, { recursive: true, force: true })
+  })
+
+  it('㊿½ open --auto "task": one-shot open + auto + prompt → done (no manual approval)', async () => {
+    const autoDir = mkdtempSync(join(tmpdir(), 'subagent-open-auto-'))
+    // Single call asks claude to create a file — would normally need approval, but --auto
+    // turns on autoApprove before the inline prompt runs, so it should reach done in one step.
+    const { json } = await cli([
+      'open', '-s', 'haiku', '--cwd', autoDir, '--auto',
+      'Create a file called open-auto.txt with content "via open --auto".',
+    ], 600_000)
+    assert.equal(json.success, true, `open --auto failed: ${json.data?.error}`)
+    assert.ok(json.data.session)
+    assert.equal(json.data.status, 'done', 'open --auto should run through to done')
+    assert.ok(json.data.output, 'done result should include output field')
+    console.log(`    open --auto result: ${json.data.status}, output: ${(json.data.output || '').slice(0, 60)}`)
+
+    // Confirm autoApprove persisted on the session (toggle off and observe previous state was on)
+    const { json: off } = await cli(['auto', '--session', json.data.session, '--off'])
+    assert.equal(off.data.auto, false, 'auto should have been on before --off')
+
+    await cli(['close', '--session', json.data.session])
+    await cli(['delete', '--session', json.data.session])
+    rmSync(autoDir, { recursive: true, force: true })
   })
 
   it('51 close captures resume_id in config.json', async () => {

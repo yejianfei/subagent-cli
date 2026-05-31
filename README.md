@@ -8,7 +8,7 @@
 [![VS Code Marketplace](https://badgen.net/vs-marketplace/v/yejianfei-billy.subagent-cli-vscode?label=VS%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=yejianfei-billy.subagent-cli-vscode)
 [![Open VSX](https://img.shields.io/open-vsx/v/yejianfei-billy/subagent-cli-vscode?label=Open%20VSX)](https://open-vsx.org/extension/yejianfei-billy/subagent-cli-vscode)
 
-**AI agents orchestrating AI agents** — a unified CLI for Claude Code, Codex, Gemini CLI, and other coding terminals.
+**AI agents orchestrating AI agents** — a unified CLI for Claude Code, Codex, and other coding terminals. The Gemini CLI adapter is preserved for legacy use but no longer maintained (Google [announced shutdown of Gemini CLI on 2026-06-18](https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/), migrating users to Antigravity CLI).
 
 Assign tasks. Review approvals. Collect results.
 
@@ -21,7 +21,7 @@ Main Agent writes spec  →  Codex spec review  ⇄  revise
                                   ↓ approved
 Main Agent writes plan  →  Codex plan review  ⇄  revise
                                   ↓ approved
-Gemini CLI codes        →  Claude Code review ⇄  fix
+Codex codes             →  Claude Code review ⇄  fix
                                   ↓ approved
                               Ship ✓
 ```
@@ -195,11 +195,11 @@ Auto-fix mechanical issues and re-review in a loop until all issues are resolved
 
 ## Supported Terminals
 
-| Adapter       | Status | CLI Tool                                              |
-| ------------- | ------ | ----------------------------------------------------- |
-| `claude-code` | ✅      | [Claude Code](https://claude.ai/code)                 |
-| `codex`       | ✅      | [OpenAI Codex CLI](https://github.com/openai/codex)   |
-| `gemini-cli`  | ✅      | [Gemini CLI](https://github.com/anthropics/gemini-cli) |
+| Adapter       | Status        | CLI Tool                                              |
+| ------------- | ------------- | ----------------------------------------------------- |
+| `claude-code` | ✅            | [Claude Code](https://claude.ai/code)                 |
+| `codex`       | ✅            | [OpenAI Codex CLI](https://github.com/openai/codex)   |
+| `gemini-cli`  | ⚠️ Deprecated | [Gemini CLI](https://github.com/google-gemini/gemini-cli) — Google [shutdown on 2026-06-18](https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/), users migrate to Antigravity CLI. This adapter is no longer maintained. |
 
 ## CLI Reference
 
@@ -207,15 +207,15 @@ Auto-fix mechanical issues and re-review in a loop until all issues are resolved
 | ----------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------- |
 | `subagents` |                                                                          | List available subagent configurations                           |
 | `sessions`  | `--cwd <path>` `--status <state>`                                        | List sessions (active + closed), filter by cwd or state          |
-| `open`      | `-s, --subagent <name>` `--cwd <path>` `--session <id>` `--role <text>` `--reuse` `--timeout <s>` `[text]` | Create or resume session. Optional `[text]` sends a prompt after open. `--reuse` returns most-recent idle/closed session with same cwd+subagent (set `idle.fast_reuse=true` to make this the default). `--role` overrides config role (new sessions only) |
-| `prompt`    | `--session <id>` `--timeout <s>` `<text>`                                | Send task, blocks until done or approval needed                  |
+| `open`      | `-s, --subagent <name>` `--cwd <path>` `--session <id>` `--role <text>` `--reuse` `--auto` `--timeout <s>` `[text]` | Create or resume session. Optional `[text]` sends a prompt after open. `--reuse` returns most-recent idle/closed session with same cwd+subagent (set `idle.fast_reuse=true` to make this the default). `--auto` turns on auto-approve before sending `[text]` (ASKING auto-confirmed, wait runs through to IDLE). `--role` overrides config role (new sessions only) |
+| `prompt`    | `--session <id>` `--timeout <s>` `--auto` `<text>`                       | Send task, blocks until done or approval needed. `--auto` turns on auto-approve before sending (ASKING auto-confirmed, runs through to IDLE) |
 | `approve`   | `--session <id>` `--timeout <s>` `-f` `[text]`                          | Approve tool use. Optional text typed before approval            |
 | `allow`     | `--session <id>` `--timeout <s>` `-f`                                    | Approve via option 2. Scope depends on target CLI                |
 | `reject`    | `--session <id>` `--timeout <s>` `-f` `[text]`                          | Reject tool use. Optional text sent as new instruction           |
 | `auto`      | `--session <id>` `--off`                                                 | Toggle auto-approve for the session                              |
 | `cancel`    | `--session <id>`                                                         | Cancel running task                                              |
 | `status`    | `--session <id>`                                                         | Get internal session state (sync)                                |
-| `check`     | `--session <id>` `--wait <state>` `--timeout <s>` `--output <type>`     | Get state. `--wait` polls until target state; 409 if ASKING      |
+| `check`     | `--session <id>` `--wait <state>` `--timeout <s>` `--output <type>`     | Get state. `--wait` polls until target state; 409 if ASKING (unless `autoApprove` is on — then keeps polling, since ASKING gets auto-confirmed internally) |
 | `output`    | `--session <id>` `--type <screen\|history\|last>`                       | Get terminal output. `last` = extracted sub-agent reply          |
 | `close`     | `--session <id>`                                                         | Close session (omit `--session` to close all). History preserved |
 | `delete`    | `--session <id>` `--closed` `--all`                                      | Delete session, all closed, or everything                        |

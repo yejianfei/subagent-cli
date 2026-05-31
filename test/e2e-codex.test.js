@@ -431,6 +431,20 @@ describe('E2E: Codex single session', { timeout: 900_000 }, () => {
     await assertCheck(sessionId, 'IDLE')
   })
 
+  it('⑫¾ prompt --auto: one-shot flag merges auto + prompt → done', async () => {
+    await assertCheck(sessionId, 'IDLE')
+    const { json } = await cli([
+      'prompt', '--auto',
+      'Create a file called auto-flag-test.txt in the current directory with content "via --auto flag".',
+      '--session', sessionId, '--timeout', '120',
+    ], 150_000)
+    assert.equal(json.success, true)
+    assert.equal(json.data.status, 'done', '--auto flag should auto-approve + complete')
+    const { json: off } = await cli(['auto', '--session', sessionId, '--off'])
+    assert.equal(off.data.auto, false, 'auto should have been on before --off')
+    await assertCheck(sessionId, 'IDLE')
+  })
+
   // ── Approve with text (amend not supported) ──
 
   it('⑬ approve with text: ignored for codex', async () => {
@@ -674,6 +688,25 @@ describe('E2E: Codex new features (v0.1.11)', { timeout: 600_000 }, () => {
     await cli(['close', '--session', json.data.session])
     await cli(['delete', '--session', json.data.session])
     rmSync(inlineDir, { recursive: true, force: true })
+  })
+
+  it('㉜½ open --auto "task": one-shot open + auto + prompt → done (no manual approval)', async () => {
+    const autoDir = mkdtempSync(join(tmpdir(), 'subagent-codex-open-auto-'))
+    const { json } = await cli([
+      'open', '-s', 'codex', '--cwd', autoDir, '--auto',
+      'Create a file called open-auto.txt with content "via open --auto".',
+    ], 600_000)
+    assert.equal(json.success, true, `open --auto failed: ${json.data?.error}`)
+    assert.ok(json.data.session)
+    assert.equal(json.data.status, 'done', 'open --auto should run through to done')
+    console.log(`    open --auto result: ${json.data.status}`)
+
+    const { json: off } = await cli(['auto', '--session', json.data.session, '--off'])
+    assert.equal(off.data.auto, false, 'auto should have been on before --off')
+
+    await cli(['close', '--session', json.data.session])
+    await cli(['delete', '--session', json.data.session])
+    rmSync(autoDir, { recursive: true, force: true })
   })
 
   it('㉝ close captures resume_id in config.json', async () => {

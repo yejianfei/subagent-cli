@@ -16,6 +16,9 @@ class TestableAdapter extends ClaudeCodeAdapter {
   testGetDetectRules() {
     return this.getAdapterDetectRules()
   }
+  testBuildInitPrompt(role) {
+    return this.buildInitPrompt(role)
+  }
 }
 
 describe('Adapter base class behavior', () => {
@@ -192,6 +195,32 @@ describe('Adapter base class behavior', () => {
       assert.equal(emitted, true)
       assert.equal(a.getState(), 'ASKING')
     })
+  })
+
+  // ── buildInitPrompt notice ──
+
+  describe('buildInitPrompt notice', () => {
+    it('includes header with role', () => {
+      const a = new TestableAdapter()
+      const p = a.testBuildInitPrompt('Java expert')
+      assert.ok(p.includes('[subagent-cli] Java expert'), 'header should contain role')
+    })
+
+    it('falls back to "hi" when role is undefined', () => {
+      const a = new TestableAdapter()
+      const p = a.testBuildInitPrompt()
+      assert.ok(p.includes('[subagent-cli] hi'))
+    })
+
+    it('appends SYSTEM notice with DO NOT directive and OK reply', () => {
+      const a = new TestableAdapter()
+      const p = a.testBuildInitPrompt('Java expert')
+      assert.ok(p.includes('[SYSTEM]'), 'notice should be flagged as SYSTEM')
+      assert.ok(/do not/i.test(p), 'notice should contain "Do not"')
+      assert.ok(p.includes('"OK"'), 'notice should ask for "OK" reply')
+      assert.ok(p.includes("user's actual task"), 'notice should refer to user task')
+    })
+
   })
 
   // ── Cancel idempotent behavior ──

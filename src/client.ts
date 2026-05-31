@@ -326,7 +326,7 @@ export class SubagentClient {
     return this.request('GET', `/sessions${qs ? `?${qs}` : ''}`)
   }
 
-  async open(params: { subagent?: string; cwd?: string; session?: string; role?: string; prompt?: string; reuse?: boolean; timeout?: number }) {
+  async open(params: { subagent?: string; cwd?: string; session?: string; role?: string; prompt?: string; reuse?: boolean; auto?: boolean; timeout?: number }) {
     // open --session <id> targeting own session is forbidden (recursive self-control)
     if (params.session) {
       const err = this.guardSelfRef(params.session)
@@ -352,9 +352,9 @@ export class SubagentClient {
     return this.request('POST', '/open', baseBody)
   }
 
-  prompt(session: string, prompt: string, timeout?: number) {
+  prompt(session: string, prompt: string, timeout?: number, auto?: boolean) {
     const err = this.guardSelfRef(session); if (err) return Promise.resolve(err)
-    return this.request('POST', `/session/${session}/prompt`, { prompt, timeout })
+    return this.request('POST', `/session/${session}/prompt`, { prompt, timeout, auto })
   }
 
   approve(session: string, prompt?: string, timeout?: number, force?: boolean) {

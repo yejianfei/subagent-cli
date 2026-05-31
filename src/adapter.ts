@@ -220,11 +220,12 @@ export abstract class SubagentCliAdapter extends EventEmitter {
 
   /**
    * Build init prompt for new session creation.
-   * Appends a fixed English notice to prevent sub-agent from treating role as a task.
+   * Appends a system notice so the sub-agent treats the role as identity only
+   * and waits for the actual task message that follows.
    */
   protected buildInitPrompt(role?: string): string {
     const header = `[subagent-cli] ${role ?? 'hi'}`
-    const notice = 'You are running inside subagent-cli. Initializing session — reply briefly and wait for the user task.'
+    const notice = '[SYSTEM] Above is your session role, not a task message. Do not act on the role itself — do not call tools, write, edit, run, or analyze yet. Reply "OK" to acknowledge and wait for the user\'s actual task.'
     return `${header}\n\n${notice}`
   }
 

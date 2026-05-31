@@ -4,7 +4,9 @@
 
 ## 项目定位
 
-Node.js + TypeScript CLI 工具，让 AI 通过 CLI 命令控制已有的编程终端（Claude Code、Codex、Gemini CLI 等），实现跨终端、跨模型的多 Agent 协作。MVP 版本采用终端控制（PTY + 屏幕解析）方式实现，支持进程隔离、两阶段审批、session 持久化。
+Node.js + TypeScript CLI 工具，让 AI 通过 CLI 命令控制已有的编程终端（Claude Code、Codex 等），实现跨终端、跨模型的多 Agent 协作。MVP 版本采用终端控制（PTY + 屏幕解析）方式实现，支持进程隔离、两阶段审批、session 持久化。
+
+> Gemini CLI 适配器保留为 legacy。Google 已宣布 2026-06-18 停服 Gemini CLI 并迁移到 Antigravity CLI，本仓库不再维护 gemini-cli adapter。
 
 ## 技术栈
 
@@ -243,7 +245,9 @@ close/exit: 发退出指令 → 解析 UUID 写入 resume_id → CLOSED
 
 Codex 在流式输出时 `esc to interrupt` 消失，只剩 `% left`。`onRunning()` 进入 RUNNING 时发送空格（`probe: ' '`），触发 `tab to queue message` 指示器。cancel 时先 Ctrl+U 清空输入再发 Escape。对 Claude Code 无影响（不设 probe）。
 
-### GeminiCliAdapter 启动流程
+### GeminiCliAdapter 启动流程（legacy, 不再维护）
+
+> Google 2026-06-18 停服 Gemini CLI，本节仅供历史参考；新代码不应再依赖该适配器。
 
 ```
 spawn gemini → onInit 处理 Trust dialog / Update notice → IDLE

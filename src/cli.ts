@@ -22,8 +22,10 @@ Workflow:
      subagent-cli open -s haiku --cwd . --role "Java expert"  # custom role as session title
      subagent-cli open -s haiku --cwd . "do the task"        # open + send first prompt
      subagent-cli open -s haiku --cwd . --reuse "task"       # reuse same-cwd session (set idle.fast_reuse=true to default-on)
+     subagent-cli open -s haiku --cwd . --auto "task"        # one-shot: open + auto-approve + run, blocks until IDLE (ASKING auto-confirmed)
   3. subagent-cli check --session <id>           # verify state before every command!
   4. subagent-cli prompt --session <id> "task"   # send task, done returns output field
+     subagent-cli prompt --session <id> --auto "task"  # auto-approve + run, blocks until IDLE (ASKING auto-confirmed)
   5. subagent-cli approve --session <id>         # approve tool use, done returns output
      subagent-cli approve --session <id> "text"  # type selection/message, then approve
      subagent-cli reject --session <id> "reason" # reject with instruction (Escape + text)
@@ -105,8 +107,9 @@ program
   .option('-s, --subagent <name>', 'Subagent to use')
   .option('--cwd <dir>', 'Working directory (default: current dir)')
   .option('--session <id>', 'Session ID to reconnect or pre-assign')
-  .option('--role <text>', 'Role prompt (overrides config role, used as session title)')
+  .option('--role <text>', 'Role description (overrides config role, used as session title). Describe identity only — avoid imperative verbs like "analyze" or "audit" to prevent the sub-agent from starting work before the task is sent.')
   .option('--reuse', 'Reuse most-recent idle/closed session with same cwd+subagent (use --no-reuse to opt out when fast_reuse=true)')
+  .option('--auto', 'Enable auto-approve before sending [text]: ASKING gets auto-confirmed, wait runs through to IDLE')
   .option('--timeout <seconds>', 'Startup timeout in seconds (overrides config)')
   .action(async (text, opts) => {
     const c = await SubagentClient.getInstance()
@@ -117,6 +120,7 @@ program
       role: opts.role,
       prompt: text,
       reuse: opts.reuse,
+      auto: opts.auto,
       timeout: opts.timeout ? Number(opts.timeout) : undefined,
     }))
   })
@@ -126,9 +130,10 @@ program
   .description('Send a prompt (blocks until done or approval needed). Done includes extracted output')
   .requiredOption('--session <id>', 'Session ID')
   .option('--timeout <seconds>', 'Task timeout in seconds (0 = no timeout)', '0')
+  .option('--auto', 'Enable auto-approve before sending: ASKING gets auto-confirmed, wait runs through to IDLE')
   .action(async (text, opts) => {
     const c = await SubagentClient.getInstance()
-    await output(await c.prompt(opts.session, text, Number(opts.timeout)))
+    await output(await c.prompt(opts.session, text, Number(opts.timeout), opts.auto))
   })
 
 program

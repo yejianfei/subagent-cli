@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.1.22] - 2026-05-31
+
+### Fixed
+
+- **`check --wait` got interrupted by ASKING even with auto-approve on.** The wait loop short-circuited with 409 `APPROVAL_NEEDED` whenever the session entered ASKING, which is correct without auto-approve (the main agent needs to step in), but wrong when the session has auto-approve enabled — there the adapter handles ASKING internally and the wait should keep polling through to IDLE. Now the 409 only fires when `adapter.autoApprove === false`.
+
+### Added
+
+- **`open --auto` and `prompt --auto` one-shot flags.** Turn on auto-approve before sending the prompt, so the call runs through to IDLE without an extra `subagent-cli auto` step. Combined with the `check --wait` fix above, the main agent can `open --auto "task"` (or `prompt --auto "task"`) and get a single `done` + `output` back without manual approval round-trips. CLI `--auto`, HTTP `auto: true` body field on `/api/open` and `/api/session/:id/prompt`, both wired through `app.ts` handlers and the reuse path.
+
+### Changed
+
+- **`buildInitPrompt` notice rewritten to remove self-contradiction.** Previous wording (`NOT a task. ... Reply "OK" and wait.`) created a contradiction when an inline prompt followed — the sub-agent had just been told "no task is coming" and then got a task. New wording uses `not a task message ... do not act on the role itself ... do not ... yet. Reply "OK" to acknowledge and wait for the user's actual task.`, which is consistent for both `open` (waits for next prompt) and `open "task"` / `open --auto "task"` (the inline prompt is the "actual task").
+- **CLI `-h` help updated.** `--role` now warns against imperative verbs (avoids accidental auto-execution under `defaultMode: auto`). Workflow section adds `open --auto "task"` and `prompt --auto "task"` examples.
+- **Gemini CLI adapter marked legacy / no longer maintained.** Google [announced](https://developers.googleblog.com/an-important-update-transitioning-gemini-cli-to-antigravity-cli/) Gemini CLI shutdown on 2026-06-18 (migration to Antigravity CLI). README + CLAUDE.md updated; the adapter code stays in place but receives no further fixes.
+
+### Tests
+
+- `app.test.js`: added `should NOT short-circuit ASKING when autoApprove is on` (verifies poll continues past ASKING when auto is on) and a new `--auto flag enables autoApprove on the session` block covering open / prompt / open+inline / no-auto baseline.
+- `adapter.test.js`: added `buildInitPrompt notice` block asserting header content, `hi` fallback, and the SYSTEM/`Do not`/`OK`/`actual task` invariants.
+- `e2e.test.js` (Claude): `㉑¾ prompt --auto` and `㊿½ open --auto "task"` end-to-end.
+- `e2e-codex.test.js` (Codex): `⑫¾ prompt --auto` and `㉜½ open --auto "task"` end-to-end.
+- Verified: 212 unit, Claude e2e 71/71, Codex e2e 44/44.
+
 ## [0.1.21] - 2026-05-29
 
 ### Fixed
