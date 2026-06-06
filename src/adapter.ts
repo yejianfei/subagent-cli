@@ -80,6 +80,9 @@ export abstract class SubagentCliAdapter extends EventEmitter {
   /** Window-scope IPC path (if any) — used by daemon for ownership filtering */
   getIpcPath(): string | undefined { return this.params?.ipc_path }
 
+  /** Rebind this session to a new window IPC path (daemon adopt-orphan flow). */
+  setIpcPath(ipcPath: string): void { this.params = { ...this.params, ipc_path: ipcPath } }
+
   /**
    * Parse the sub-agent's session ID from exit output.
    * Subclasses override with adapter-specific regex (e.g. UUID format).

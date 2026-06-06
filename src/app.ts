@@ -1,6 +1,7 @@
 import Koa from 'koa'
 import Router from '@koa/router'
 import { createServer, type Server } from 'http'
+import { createConnection } from 'net'
 import { WebSocketServer, WebSocket } from 'ws'
 import { readFileSync, writeFileSync, rmSync, readdirSync, existsSync, mkdirSync, unlinkSync, statSync } from 'fs'
 import { join } from 'path'
@@ -15,6 +16,26 @@ import { VIEWER_HTML, renderViewerIndex, renderSessionRow } from './viewer_templ
 // Client side reads/parses this file directly (see src/client.ts); no shared module is needed
 // for two write operations on the daemon side.
 const daemonPidPath = (): string => join(getHome(), 'daemon.pid')
+
+/**
+ * Workspace-scope key of an IPC path: the uuid minus the trailing `_<VSCODE_PID>`.
+ * Two windows of the same workspace share this key but differ by PID, so it
+ * identifies "same workspace, possibly across an editor restart".
+ */
+function ipcWorkspaceKey(ipcPath: string): string {
+  return parseIpcUuid(ipcPath).replace(/_\d+$/, '')
+}
+
+/** Probe a unix socket / named pipe; resolve true if a server is currently listening. */
+function probeSocketAlive(socketPath: string, timeoutMs = 200): Promise<boolean> {
+  return new Promise((resolve) => {
+    const sock = createConnection(socketPath)
+    const finish = (alive: boolean): void => { sock.destroy(); resolve(alive) }
+    const timer = setTimeout(() => finish(false), timeoutMs)
+    sock.once('connect', () => { clearTimeout(timer); finish(true) })
+    sock.once('error', () => { clearTimeout(timer); finish(false) })
+  })
+}
 
 // Load all adapters (self-register)
 import './adapters/claude_code'
@@ -277,6 +298,53 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
     } catch { return '' }
   }
 
+  /** Rewrite ipc_path in a persisted session config.json (adopt-orphan flow). */
+  function updateDiskIpc(id: string, ipcPath: string): void {
+    const cfgFile = join(sessionDir(id), 'config.json')
+    if (!existsSync(cfgFile)) return
+    const saved = JSON.parse(readFileSync(cfgFile, 'utf-8'))
+    saved.ipc_path = ipcPath
+    writeFileSync(cfgFile, JSON.stringify(saved, null, 2) + '\n')
+  }
+
+  /**
+   * Adopt orphaned sessions of the caller's workspace into the caller's window.
+   *
+   * Scenario: the editor restarted while the daemon kept running → new VSCODE_PID →
+   * new socket path. The caller's old sessions are still bound to the dead window's
+   * socket path, so window-ownership checks would 403. Rebind them to the caller.
+   *
+   * Selection: same workspace key (ipc uuid minus pid). Guard: only adopt when the
+   * stored socket is no longer listening — a live socket means a second window of
+   * the same workspace is genuinely open, so isolation must be preserved.
+   */
+  async function adoptOrphanSessions(callerIpc: string): Promise<void> {
+    if (!callerIpc) return
+    const callerKey = ipcWorkspaceKey(callerIpc)
+    const isCandidate = (ipc: string): boolean =>
+      ipc !== '' && ipc !== callerIpc && ipcWorkspaceKey(ipc) === callerKey
+
+    const activeTargets = Array.from(sessions.entries())
+      .map(([id, adapter]): [string, SubagentCliAdapter, string] => [id, adapter, adapter.getIpcPath() ?? ''])
+      .filter(([, , ipc]) => isCandidate(ipc))
+    await Promise.all(activeTargets.map(async ([id, adapter, ipc]) => {
+      if (await probeSocketAlive(ipc)) return
+      adapter.setIpcPath(callerIpc)
+      updateDiskIpc(id, callerIpc)
+    }))
+
+    const sessDir = join(getHome(), 'sessions')
+    if (!existsSync(sessDir)) return
+    const diskTargets = readdirSync(sessDir)
+      .filter(id => !sessions.has(id))
+      .map((id): [string, string] => [id, diskSessionIpc(id)])
+      .filter(([, ipc]) => isCandidate(ipc))
+    await Promise.all(diskTargets.map(async ([id, ipc]) => {
+      if (await probeSocketAlive(ipc)) return
+      updateDiskIpc(id, callerIpc)
+    }))
+  }
+
   // ── Window ownership middleware (single-session routes) ──
   // Window-scope access on `/api/session/:id/*` routes.
   // - caller header empty → CLI/admin: full access to every session
@@ -284,11 +352,13 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
   // - caller header set + mismatch (incl. session ipc empty) → 403 WINDOW_MISMATCH
   router.use('/session/:id', async (ctx, next) => {
     const id = ctx.params.id
+    const callerIpc = getCallerIpc(ctx)
+    // Adopt this window's orphaned sessions (editor restart → new PID) before the check
+    if (callerIpc) await adoptOrphanSessions(callerIpc)
     const adapter = sessions.get(id)
     const sessionIpc = adapter ? (adapter.getIpcPath() ?? '') : diskSessionIpc(id)
     // For brand-new sessions or non-existent ids we let the route handler return 404
     if (!adapter && !sessionIpc) return next()
-    const callerIpc = getCallerIpc(ctx)
     if (callerIpc !== '' && callerIpc !== sessionIpc) {
       fail(ctx, 403, 'WINDOW_MISMATCH', `Session ${id} is bound to a different window`)
       return
@@ -305,10 +375,13 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
   })
 
   // GET /api/sessions?cwd=xxx&status=IDLE
-  router.get('/sessions', (ctx) => {
+  router.get('/sessions', async (ctx) => {
     const cwdFilter = ctx.query.cwd as string | undefined
     const statusFilter = ctx.query.status as string | undefined
     const callerIpc = getCallerIpc(ctx)
+    // The VS Code extension polls this every 5s with its current ipc header; the
+    // sweep self-heals orphaned sessions after an editor restart (no plugin change).
+    if (callerIpc) await adoptOrphanSessions(callerIpc)
 
     const active = Array.from(sessions.entries())
       .filter(([, adapter]) => callerIpc === '' || (adapter.getIpcPath() ?? '') === callerIpc)
@@ -346,6 +419,10 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
     const body = ctx.request.body as Record<string, unknown>
     const sessionId = body.session as string | undefined
     const timeout = body.timeout ? Number(body.timeout) : 0
+    const bodyIpcPath = body.ipc_path as string | undefined
+    // Adopt orphaned same-workspace sessions (editor restart → new PID) before
+    // reconnect/recover so the resolved session binds to this window's socket.
+    if (bodyIpcPath) await adoptOrphanSessions(bodyIpcPath)
 
     // Reconnect in-memory
     if (sessionId && sessions.has(sessionId)) {
@@ -401,7 +478,6 @@ export function app(opts?: AppOptions | AppConfig): AppContext {
     // ── Reuse logic ──
     const excludeSession = body.exclude_session as string | undefined
     const reuseEnabled = (body.reuse as boolean | undefined) ?? config.idle.fast_reuse ?? false
-    const bodyIpcPath = body.ipc_path as string | undefined
     if (reuseEnabled) {
       const reused = await tryReuseSession(cwd, subagentName, subCfg.adapter, timeout, body.prompt as string | undefined, excludeSession, bodyIpcPath ?? '', body.auto === true)
       if (reused) { ok(ctx, reused); return }

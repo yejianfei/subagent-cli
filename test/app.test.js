@@ -5,6 +5,7 @@ const { app } = require('../dist/app')
 const { mkdirSync, rmSync, existsSync } = require('fs')
 const { join } = require('path')
 const { tmpdir } = require('os')
+const net = require('net')
 
 // ── Test Config ──
 
@@ -106,6 +107,7 @@ function createMockAdapter() {
     close: () => { state = 'CLOSED'; return Promise.resolve() },
     getParams: () => params,
     getIpcPath: () => params.ipc_path,
+    setIpcPath: (p) => { params.ipc_path = p },
     autoApprove: false,
     setAutoApprove(v) { adapter.autoApprove = v },
     // Allow test to force state transitions
@@ -1059,6 +1061,100 @@ describe('App HTTP API', () => {
       assert.equal(res.body.code, 404)
       assert.equal(typeof res.body.data.error, 'string')
       assert.equal(typeof res.body.data.message, 'string')
+    })
+  })
+
+  // ── Window ownership & orphan adoption (editor restart rebind) ──
+
+  describe('Window ownership & orphan adoption', () => {
+    let ctxWin
+    let agentWin
+    const WIN_HOME = join(tmpdir(), `subagent-win-${Date.now()}`)
+    const ipcPath = (hash, pid) => join(tmpdir(), `subagent-cli_${hash}_${pid}.sock`)
+
+    before(() => {
+      mkdirSync(join(WIN_HOME, 'sessions'), { recursive: true })
+      ctxWin = app({
+        config: { ...testConfig, home: WIN_HOME },
+        adapterFactory: () => createMockAdapter(),
+      })
+      agentWin = request(ctxWin.app.callback())
+    })
+
+    after(() => {
+      ctxWin.stop()
+      rmSync(WIN_HOME, { recursive: true, force: true })
+    })
+
+    const openWithIpc = async (hash, pid) => {
+      const res = await agentWin
+        .post('/api/open')
+        .send({ subagent: 'test-agent', cwd: VALID_CWD, ipc_path: ipcPath(hash, pid) })
+        .set('Content-Type', 'application/json')
+        .expect(200)
+      return res.body.data.session
+    }
+
+    it('allows same-window caller (identical ipc)', async () => {
+      const sid = await openWithIpc('aaaa0001', 1001)
+      await agentWin
+        .get(`/api/session/${sid}/status`)
+        .set('X-Subagent-Cli-IPC', ipcPath('aaaa0001', 1001))
+        .expect(200)
+      await agentWin.delete(`/api/session/${sid}`)
+    })
+
+    it('403 for a different workspace (hash mismatch, no adoption)', async () => {
+      const sid = await openWithIpc('bbbb0002', 1001)
+      const res = await agentWin
+        .get(`/api/session/${sid}/status`)
+        .set('X-Subagent-Cli-IPC', ipcPath('cccc9999', 2002))
+        .expect(403)
+      assert.equal(res.body.data.error, 'WINDOW_MISMATCH')
+      await agentWin.delete(`/api/session/${sid}`)
+    })
+
+    it('adopts orphan on restart: same workspace + dead old socket → allow + rebind', async () => {
+      const sid = await openWithIpc('dddd0003', 1001)
+      const newIpc = ipcPath('dddd0003', 2002)
+      await agentWin
+        .get(`/api/session/${sid}/status`)
+        .set('X-Subagent-Cli-IPC', newIpc)
+        .expect(200)
+      assert.equal(ctxWin.sessions.get(sid).getIpcPath(), newIpc, 'session rebound to new window ipc')
+      await agentWin.delete(`/api/session/${sid}`)
+    })
+
+    it('keeps isolation: same workspace but old socket still alive → 403', async () => {
+      const oldIpc = ipcPath('eeee0004', 1001)
+      existsSync(oldIpc) && rmSync(oldIpc)
+      const server = net.createServer()
+      await new Promise(r => server.listen(oldIpc, r))
+      try {
+        const sid = await openWithIpc('eeee0004', 1001)
+        const res = await agentWin
+          .get(`/api/session/${sid}/status`)
+          .set('X-Subagent-Cli-IPC', ipcPath('eeee0004', 2002))
+          .expect(403)
+        assert.equal(res.body.data.error, 'WINDOW_MISMATCH')
+        assert.equal(ctxWin.sessions.get(sid).getIpcPath(), oldIpc, 'live owner keeps the session')
+        await agentWin.delete(`/api/session/${sid}`)
+      } finally {
+        await new Promise(r => server.close(r))
+        existsSync(oldIpc) && rmSync(oldIpc)
+      }
+    })
+
+    it('GET /api/sessions sweeps orphans into the polling window', async () => {
+      const sid = await openWithIpc('ffff0005', 1001)
+      const newIpc = ipcPath('ffff0005', 2002)
+      const res = await agentWin
+        .get('/api/sessions')
+        .set('X-Subagent-Cli-IPC', newIpc)
+        .expect(200)
+      assert.ok(res.body.data.sessions.find(s => s.session === sid), 'orphan listed after sweep')
+      assert.equal(ctxWin.sessions.get(sid).getIpcPath(), newIpc)
+      await agentWin.delete(`/api/session/${sid}`)
     })
   })
 

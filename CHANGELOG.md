@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.23] - 2026-06-06
+
+### Fixed
+
+- **Old sessions returned `WINDOW_MISMATCH` (403) after an editor restart.** When the daemon kept running but the editor (VS Code / Trae) was fully restarted, its main-process `VSCODE_PID` changed, so the new IPC socket path differed from the one the surviving sessions were bound to. Window-ownership checks compared the full socket path, so every pre-restart session 403'd while new sessions worked. The daemon now adopts orphaned sessions of the caller's workspace: same workspace key (the ipc uuid minus the trailing `_<PID>`) plus a liveness probe of the stored socket — if the old socket no longer listens, the session is rebound to the caller's new socket (in-memory map + on-disk `config.json`); if it still listens, a second live window of the same workspace genuinely owns it, so isolation is preserved. Adoption runs on the `/api/session/:id` ownership middleware, `GET /api/sessions`, and `POST /api/open`, so the extension's 5s `/api/sessions` poll self-heals after a restart with zero plugin changes.
+
+### Tests
+
+- `app.test.js`: new `Window ownership & orphan adoption` block (5 cases) — same-window allow, cross-workspace 403, restart adopt-and-rebind on dead socket, isolation kept when the old socket is still alive, and `GET /api/sessions` orphan sweep.
+
 ## [0.1.22] - 2026-05-31
 
 ### Fixed
