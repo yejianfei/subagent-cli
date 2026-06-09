@@ -2,6 +2,7 @@ import { SubagentCliAdapter, registerAdapter } from '../adapter'
 import type { OpenParams, OpenResult, DetectRules, ApprovalInfo } from '../types'
 
 const SESSION_ID_RE = /codex resume\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /**
  * CodexAdapter — adapter for OpenAI Codex CLI (interactive TUI mode).
@@ -24,7 +25,14 @@ export class CodexAdapter extends SubagentCliAdapter {
   readonly name = 'codex'
 
   buildResumeArgs(resumeId: string, originalArgs: string[]): string[] {
-    return ['resume', resumeId, ...originalArgs]
+    // Drop a leading `resume <id>` left over from a previous reuse round.
+    // Without this, a second reuse stacks another positional session id
+    // (`codex resume <new> resume <old>`), which clap rejects as an
+    // "unexpected argument". Idempotent here also self-heals polluted configs.
+    const rest = originalArgs[0] === 'resume' && UUID_RE.test(originalArgs[1] ?? '')
+      ? originalArgs.slice(2)
+      : originalArgs
+    return ['resume', resumeId, ...rest]
   }
 
   /**

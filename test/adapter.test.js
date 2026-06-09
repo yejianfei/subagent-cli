@@ -1,6 +1,6 @@
 const { describe, it } = require('node:test')
 const assert = require('node:assert/strict')
-const { ClaudeCodeAdapter } = require('../dist/app')
+const { ClaudeCodeAdapter, CodexAdapter } = require('../dist/app')
 
 /**
  * Adapter tests — uses ClaudeCodeAdapter as concrete implementation.
@@ -245,6 +245,59 @@ describe('Adapter base class behavior', () => {
       a.state = 'ASKING'
       const result = await a.cancel()
       assert.equal(result.status, 'done')
+    })
+  })
+})
+
+// Regression: resuming a session whose saved args already carry a resume
+// invocation must NOT stack a second one. A second reuse round persisted
+// args = ['resume', oldId], so buildResumeArgs(newId, that) used to produce
+// ['resume', newId, 'resume', oldId] → `codex resume <newId> resume <oldId>`,
+// which clap rejects with "unexpected argument '<oldId>' found".
+describe('buildResumeArgs idempotency', () => {
+  describe('CodexAdapter (subcommand form)', () => {
+    it('resumes cleanly from pristine args', () => {
+      const a = new CodexAdapter()
+      assert.deepEqual(a.buildResumeArgs('019ea55b-2222-7232-a101-9f331269e27f', []), ['resume', '019ea55b-2222-7232-a101-9f331269e27f'])
+    })
+
+    it('does not stack a second resume when args already contain one', () => {
+      const a = new CodexAdapter()
+      assert.deepEqual(
+        a.buildResumeArgs('019ea55b-2222-7232-a101-9f331269e27f', ['resume', '019ea55b-1111-7232-a101-9f331269e27f']),
+        ['resume', '019ea55b-2222-7232-a101-9f331269e27f'],
+      )
+    })
+
+    it('strips the old resume but keeps unrelated original args', () => {
+      const a = new CodexAdapter()
+      assert.deepEqual(
+        a.buildResumeArgs('019ea55b-2222-7232-a101-9f331269e27f', ['resume', '019ea55b-1111-7232-a101-9f331269e27f', '--model', 'gpt-5']),
+        ['resume', '019ea55b-2222-7232-a101-9f331269e27f', '--model', 'gpt-5'],
+      )
+    })
+  })
+
+  describe('ClaudeCodeAdapter (--resume flag form)', () => {
+    it('resumes cleanly from pristine args', () => {
+      const a = new ClaudeCodeAdapter()
+      assert.deepEqual(a.buildResumeArgs('019ea55b-2222-7232-a101-9f331269e27f', []), ['--resume', '019ea55b-2222-7232-a101-9f331269e27f'])
+    })
+
+    it('does not stack a second --resume when args already contain one', () => {
+      const a = new ClaudeCodeAdapter()
+      assert.deepEqual(
+        a.buildResumeArgs('019ea55b-2222-7232-a101-9f331269e27f', ['--resume', '019ea55b-1111-7232-a101-9f331269e27f']),
+        ['--resume', '019ea55b-2222-7232-a101-9f331269e27f'],
+      )
+    })
+
+    it('strips the old --resume but keeps unrelated original args', () => {
+      const a = new ClaudeCodeAdapter()
+      assert.deepEqual(
+        a.buildResumeArgs('019ea55b-2222-7232-a101-9f331269e27f', ['--model', 'sonnet', '--resume', '019ea55b-1111-7232-a101-9f331269e27f']),
+        ['--model', 'sonnet', '--resume', '019ea55b-2222-7232-a101-9f331269e27f'],
+      )
     })
   })
 })

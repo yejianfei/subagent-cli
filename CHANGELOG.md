@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.24] - 2026-06-09
+
+### Fixed
+
+- **`buildResumeArgs` not idempotent — second reuse round crashed codex with "unexpected argument".** When `fast_reuse` was enabled and a CLOSED disk session was reused twice, `persistSession` saved the resume-injected args (`['resume', '<old-id>']`) back to disk. The next `buildResumeArgs` stacked another `resume` prefix, producing `codex resume <new> resume <old>` — clap rejected the extra positional arg. Both `CodexAdapter` (subcommand form) and the base class default (`--resume` flag form) now strip any existing resume invocation before prepending the new one, making the operation idempotent. Polluted on-disk configs self-heal on the next reuse.
+
+- **`close`/`exit` failed to capture codex `resume_id` due to data/exit race.** The `codex resume <uuid>` hint lands in the pty data stream ~9ms before the `exit` event, but the old code ran `flush + capture` synchronously on `exit` — often executing before the data listener had written that final chunk into xterm. `captureExitSessionId` is now event-driven: a `data` listener is attached before sending the exit command, strips ANSI escapes from the raw stream, and runs `parseSessionId` on each chunk. A match resolves immediately; the `exit` event serves as the terminal signal with one final capture attempt. No polling, no time windows.
+
+### Tests
+
+- `adapter.test.js`: new `buildResumeArgs idempotency` block (6 cases) — pristine args, double-resume strip, unrelated-args preservation, for both CodexAdapter (subcommand) and ClaudeCodeAdapter (`--resume` flag).
+
 ## [0.1.23] - 2026-06-06
 
 ### Fixed

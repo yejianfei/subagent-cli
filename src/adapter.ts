@@ -218,7 +218,13 @@ export abstract class SubagentCliAdapter extends EventEmitter {
 
   /** Build args for resuming a session. Subclasses override for different resume formats. */
   buildResumeArgs(resumeId: string, originalArgs: string[]): string[] {
-    return [...originalArgs, '--resume', resumeId]
+    // Drop any existing `--resume <id>` so repeated reuse rounds don't stack
+    // flags (the persisted args already carry the previous resume invocation).
+    const i = originalArgs.indexOf('--resume')
+    const rest = i >= 0
+      ? [...originalArgs.slice(0, i), ...originalArgs.slice(i + 2)]
+      : originalArgs
+    return [...rest, '--resume', resumeId]
   }
 
   /**
@@ -468,11 +474,9 @@ export abstract class SubagentCliAdapter extends EventEmitter {
     })
     this.sendExitCommand(rules.input_keys.exit)
     await pending
-    // Capture exit output and parse session ID
-    await this.terminal.flush()
-    const exitOutput = this.terminal.capture(1000)
-    const parsed = this.parseSessionId(exitOutput)
-    if (parsed) this.sessionIdValue = parsed
+    // Capture session ID — poll past the data/exit-event race (the resume hint
+    // can land a few hundred ms after the exit event fires)
+    await this.captureExitSessionId()
     this.stopDetection()
     this.state = 'CLOSED'
   }
@@ -487,6 +491,25 @@ export abstract class SubagentCliAdapter extends EventEmitter {
     this.terminal.write(`/${exitCmd}`, true)
     await this.wait(500)
     this.terminal.write('\r')
+  }
+
+  /**
+   * Capture the session id from the exit screen, polling to beat the data/exit
+   * race: a CLI prints its final `resume` hint a few hundred ms AFTER the pty
+   * exit event fires, so a single capture right after exit misses it. Read-only —
+   * sets sessionIdValue only on a hit, gives up silently after maxMs.
+   */
+  protected async captureExitSessionId(maxMs = 3000): Promise<void> {
+    const deadline = Date.now() + maxMs
+    while (Date.now() < deadline) {
+      await this.terminal.flush()
+      const parsed = this.parseSessionId(this.terminal.capture(1000))
+      if (parsed) {
+        this.sessionIdValue = parsed
+        return
+      }
+      await this.wait(300)
+    }
   }
 
   /** Screen-calibrated state check (authoritative, async — flush + capture bottom lines → detect) */
@@ -523,6 +546,9 @@ export abstract class SubagentCliAdapter extends EventEmitter {
         const timer = setTimeout(() => resolve(false), 10_000)
         this.terminal.once('exit', () => { clearTimeout(timer); resolve(true) })
       })
+      // Attach capture BEFORE sending exit so the data listener catches the
+      // resume hint as it flows out
+      const grab = this.captureExitSessionId()
       try {
         await this.sendExitCommand(rules.input_keys.exit)
       } catch {
@@ -537,11 +563,7 @@ export abstract class SubagentCliAdapter extends EventEmitter {
           this.terminal.once('exit', () => { clearTimeout(t); resolve() })
         })
       }
-      // Try to capture session ID even on close
-      await this.terminal.flush()
-      const exitOutput = this.terminal.capture(1000)
-      const parsed = this.parseSessionId(exitOutput)
-      if (parsed) this.sessionIdValue = parsed
+      await grab
     }
     this.stopDetection()
     this.terminal?.dispose()
