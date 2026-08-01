@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.25] - 2026-08-01
+
+### Fixed
+
+- **Codex `open` stalled at `RUNNING`/timed out with `READY_TIMEOUT` when `cwd` was under `$HOME`.** Codex's TUI collapses paths under `$HOME` to `~/…` instead of showing the absolute path, so the idle marker becomes `· ~` rather than `· /`. Two independent idle-detection code paths in `CodexAdapter` only recognized `· /` (and the fresh-spawn screen shows no `% left` yet, since context usage isn't tracked until after the first exchange): the detection engine's `idle_words` (used for all post-init interaction) and `onInit()`'s own hardcoded startup check (used only during spawn → first IDLE, and ignoring the caller's `--timeout` entirely — it has a fixed 60×2s budget). Both now also match `· ~`.
+
+### Tests
+
+- `detect.test.js`: new CodexAdapter case — `gpt-5.5 high · ~/subagent-bug-repro` detects as `IDLE`.
+- `e2e-codex.test.js`: new regression case — `open` with `cwd` under `$HOME` reaches `IDLE`.
+
 ## [0.1.24] - 2026-06-09
 
 ### Fixed

@@ -174,6 +174,15 @@ describe('CodexAdapter detect() state detection', () => {
     assert.equal(a.detectState(text), 'IDLE')
   })
 
+  it('detects IDLE when cwd is under $HOME (path shown as ~/…)', () => {
+    // Regression: codex TUI collapses paths under $HOME to `~/…`, so the
+    // idle marker becomes `· ~` instead of `· /`. Missing `· ~` in idle_words
+    // stalled init when cwd was any subdirectory of $HOME.
+    const a = new TestableCodex()
+    const text = 'gpt-5.5 high · ~/subagent-bug-repro'
+    assert.equal(a.detectState(text), 'IDLE')
+  })
+
   it('detects RUNNING from working status bar', () => {
     const a = new TestableCodex()
     const text = 'Working (3s · esc to interrupt) gpt-5.4 default · 100% left'

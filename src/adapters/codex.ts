@@ -55,7 +55,7 @@ export class CodexAdapter extends SubagentCliAdapter {
       // dialog linger and re-match below, then ↓+Enter mis-navigated the trust dialog (selecting "No, quit").
       const screen = this.terminal.capture()
 
-      if ((screen.includes('% left') || screen.includes('· /'))
+      if ((screen.includes('% left') || screen.includes('· /') || screen.includes('· ~'))
           && !screen.includes('Booting')) {
         this.terminal.write('\x15') // Ctrl+U: clear any probe residue
         this.state = 'IDLE'
@@ -159,12 +159,13 @@ export class CodexAdapter extends SubagentCliAdapter {
         explain: '',
         exit: 'quit',
       },
-      match_words: ['% left', 'esc to', 'tab to queue', '· /'],
+      match_words: ['% left', 'esc to', 'tab to queue', '· /', '· ~'],
       // `% left` is chrome (context-remaining indicator), NOT an idle marker — it's visible both
       // when codex is streaming and when codex is idle. Treating it as idle causes the detection
       // engine to short-circuit PENDING → IDLE during streaming, which in turn never fires
-      // onRunning() and never sends the probe space. `· /` is the real idle prompt marker.
-      idle_words: ['· /'],
+      // onRunning() and never sends the probe space. `· /` is the real idle prompt marker;
+      // `· ~` covers the same marker when codex collapses paths under $HOME to `~/…`.
+      idle_words: ['· /', '· ~'],
       running_words: ['esc to interrupt', 'tab to queue'],
       asking_words: ['esc to cancel'],
       probe: ' ',

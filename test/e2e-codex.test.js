@@ -742,6 +742,25 @@ describe('E2E: Codex new features (v0.1.11)', { timeout: 600_000 }, () => {
     rmSync(reuseDir, { recursive: true, force: true })
   })
 
+  it('㉟-regression: cwd under $HOME (path collapsed to ~/…) → init reaches IDLE', async () => {
+    // Codex TUI collapses paths under $HOME to `~/…`, so the idle marker
+    // becomes `· ~` instead of `· /`. Prior to the idle_words fix, init stalled
+    // at RUNNING for any cwd under home. Uses a mkdtemp under $HOME (auto-cleaned).
+    const homeDir = mkdtempSync(join(homedir(), 'subagent-codex-home-'))
+    try {
+      const { json } = await cli(['open', '-s', 'codex', '--cwd', homeDir], 300_000)
+      assert.equal(json.success, true, `Open in $HOME subdir failed: ${JSON.stringify(json)}`)
+      const sid = json.data.session
+      const { json: status } = await cli(['status', '--session', sid])
+      assert.equal(status.data.state, 'IDLE', 'Should reach IDLE after init in $HOME subdir')
+      console.log(`    Home-subdir session ${sid} reached IDLE`)
+      await cli(['close', '--session', sid])
+      await cli(['delete', '--session', sid])
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true })
+    }
+  })
+
   it('㉟ recursive self-reference guard blocks self-targeted commands', async () => {
     const recurDir = mkdtempSync(join(tmpdir(), 'subagent-codex-recur-'))
     const { json: r1 } = await cli(['open', '-s', 'codex', '--cwd', recurDir], 300_000)
@@ -790,6 +809,15 @@ after(async () => {
     for (const f of tmpFiles) {
       if (f.startsWith('subagent-codex-')) {
         rmSync(join(tmpdir(), f), { recursive: true, force: true })
+      }
+    }
+  } catch { /* ignore */ }
+  // Also sweep the home-cwd regression dirs (mkdtemp under $HOME)
+  try {
+    const homeFiles = readdirSync(homedir())
+    for (const f of homeFiles) {
+      if (f.startsWith('subagent-codex-home-')) {
+        rmSync(join(homedir(), f), { recursive: true, force: true })
       }
     }
   } catch { /* ignore */ }
